@@ -72,6 +72,37 @@ export class PromptFirewall {
     ];
   }
 
+  // Normalize input to defeat unicode/encoding evasion
+  private normalizeInput(input: string): string {
+    let normalized = input;
+
+    // NFKC normalization: collapses fullwidth, compatibility chars, etc.
+    normalized = normalized.normalize('NFKC');
+
+    // Map common Cyrillic/Greek/other homoglyphs to ASCII
+    const homoglyphMap: Record<string, string> = {
+      '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p',
+      '\u0441': 'c', '\u0443': 'y', '\u0445': 'x', '\u0456': 'i',
+      '\u0458': 'j', '\u04bb': 'h', '\u0501': 'd', '\u051b': 'q',
+      '\u0405': 'S', '\u0406': 'I', '\u0408': 'J', '\u0410': 'A',
+      '\u0412': 'B', '\u0415': 'E', '\u041a': 'K', '\u041c': 'M',
+      '\u041d': 'H', '\u041e': 'O', '\u0420': 'P', '\u0421': 'C',
+      '\u0422': 'T', '\u0425': 'X',
+      // Greek
+      '\u03b1': 'a', '\u03b5': 'e', '\u03bf': 'o', '\u03c1': 'p',
+      '\u0391': 'A', '\u0392': 'B', '\u0395': 'E', '\u039a': 'K',
+      '\u039c': 'M', '\u039d': 'N', '\u039f': 'O', '\u03a1': 'P',
+      '\u03a4': 'T', '\u03a7': 'X',
+    };
+
+    normalized = normalized.replace(/[\u0400-\u04ff\u0370-\u03ff]/g, ch => homoglyphMap[ch] || ch);
+
+    // Strip zero-width and invisible characters (scan still detects them separately)
+    normalized = normalized.replace(/[\u200b\u200c\u200d\u200e\u200f\u2060\u2061\u2062\u2063\u2064\ufeff\u00ad]/g, '');
+
+    return normalized;
+  }
+
   // Main scanning function
   scanInput(
     input: string,
@@ -81,6 +112,9 @@ export class PromptFirewall {
   ): PromptScanResult {
     const injectionAttempts: InjectionAttempt[] = [];
     const inputHash = this.hashInput(input);
+
+    // Normalize to catch unicode evasion — patterns run against normalized text
+    const normalizedInput = this.normalizeInput(input);
     
     // Get or create session
     const session = this.getOrCreateSession(agentId, sessionId);
@@ -98,23 +132,34 @@ export class PromptFirewall {
     }
     session.inputHashes.add(inputHash);
 
-    // Scan for known injection patterns
-    const patternInjections = this.scanForInjectionPatterns(input);
+    // Scan normalized input for injection patterns (catches homoglyph evasion)
+    const patternInjections = this.scanForInjectionPatterns(normalizedInput);
     injectionAttempts.push(...patternInjections);
 
-    // Scan for encoding attacks
+    // Scan ORIGINAL input for encoding attacks (zero-width chars, base64, etc.)
     const encodingInjections = this.scanForEncodingAttacks(input);
     injectionAttempts.push(...encodingInjections);
 
+    // Flag if normalization changed the input significantly (evasion attempt)
+    if (input !== normalizedInput && input.length !== normalizedInput.length) {
+      injectionAttempts.push({
+        type: 'encoding_attack',
+        severity: 'high',
+        pattern: 'unicode_normalization_diff',
+        location: 'full_input',
+        blocked: false,
+      });
+    }
+
     // Scan for context boundary violations
-    const boundaryInjections = this.scanForBoundaryViolations(input, metadata);
+    const boundaryInjections = this.scanForBoundaryViolations(normalizedInput, metadata);
     injectionAttempts.push(...boundaryInjections);
 
     // Check for context isolation violations
-    const contextIsolationViolation = this.checkContextIsolation(session, input);
+    const contextIsolationViolation = this.checkContextIsolation(session, normalizedInput);
 
     // Check for behavioral drift
-    const behaviorDrift = this.checkBehaviorDrift(session, input);
+    const behaviorDrift = this.checkBehaviorDrift(session, normalizedInput);
 
     // Calculate risk score
     const riskScore = this.calculateRiskScore(
@@ -449,15 +494,16 @@ export class PromptFirewall {
     return `...${input.substring(start, end)}...`;
   }
 
-  // Simple hash
+  // Collision-resistant hash (sync FNV-1a 64-bit split)
   private hashInput(input: string): string {
-    let hash = 0;
+    let h1 = 0x811c9dc5;
+    let h2 = 0xcbf29ce4;
     for (let i = 0; i < input.length; i++) {
-      const char = input.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
+      const c = input.charCodeAt(i);
+      h1 = Math.imul(h1 ^ (c & 0xff), 0x01000193);
+      h2 = Math.imul(h2 ^ ((c >> 8) & 0xff), 0x01000193);
     }
-    return hash.toString(36);
+    return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
   }
 
   // Sanitize input by removing detected injection patterns

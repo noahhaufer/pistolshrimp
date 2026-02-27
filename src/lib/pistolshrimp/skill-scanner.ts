@@ -38,6 +38,9 @@ export class SkillScanner {
 
     const threats: SkillThreat[] = [];
 
+    // Normalize content to defeat unicode evasion
+    const normalizedContent = content.normalize('NFKC');
+
     // Check known malicious authors
     if (authorId && this.threatIntel.knownMaliciousAuthors.includes(authorId)) {
       threats.push({
@@ -58,36 +61,29 @@ export class SkillScanner {
       });
     }
 
-    // Scan content for malware signatures
-    const signatureThreats = this.scanForMalwareSignatures(content);
+    // Scan normalized content for all threat patterns (defeats unicode evasion)
+    const signatureThreats = this.scanForMalwareSignatures(normalizedContent);
     threats.push(...signatureThreats);
 
-    // Scan for C2 infrastructure
-    const c2Threats = this.scanForC2Infrastructure(content);
+    const c2Threats = this.scanForC2Infrastructure(normalizedContent);
     threats.push(...c2Threats);
 
-    // Scan for credential theft patterns
-    const credThreats = this.scanForCredentialTheft(content);
+    const credThreats = this.scanForCredentialTheft(normalizedContent);
     threats.push(...credThreats);
 
-    // Scan for reverse shells
-    const shellThreats = this.scanForReverseShells(content);
+    const shellThreats = this.scanForReverseShells(normalizedContent);
     threats.push(...shellThreats);
 
-    // Scan for prompt injection in skill content
-    const injectionThreats = this.scanForEmbeddedInjection(content);
+    const injectionThreats = this.scanForEmbeddedInjection(normalizedContent);
     threats.push(...injectionThreats);
 
-    // Scan for social engineering patterns
-    const socialThreats = this.scanForSocialEngineering(content);
+    const socialThreats = this.scanForSocialEngineering(normalizedContent);
     threats.push(...socialThreats);
 
-    // Scan for obfuscated code
-    const obfuscationThreats = this.scanForObfuscation(content);
+    const obfuscationThreats = this.scanForObfuscation(normalizedContent);
     threats.push(...obfuscationThreats);
 
-    // Scan for unauthorized MCP endpoints
-    const mcpThreats = this.scanForUnauthorizedMCP(content);
+    const mcpThreats = this.scanForUnauthorizedMCP(normalizedContent);
     threats.push(...mcpThreats);
 
     // Calculate risk score
@@ -392,15 +388,17 @@ export class SkillScanner {
     return Math.min(100, score);
   }
 
-  // Simple hash for cache key
+  // Collision-resistant hash for cache key (sync FNV-1a 64-bit)
   private hashContent(content: string): string {
-    let hash = 0;
+    // FNV-1a with 64-bit split into two 32-bit halves for JS safety
+    let h1 = 0x811c9dc5;
+    let h2 = 0xcbf29ce4;
     for (let i = 0; i < content.length; i++) {
-      const char = content.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
+      const c = content.charCodeAt(i);
+      h1 = Math.imul(h1 ^ (c & 0xff), 0x01000193);
+      h2 = Math.imul(h2 ^ ((c >> 8) & 0xff), 0x01000193);
     }
-    return hash.toString(36);
+    return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
   }
 
   // Check if skill is quarantined

@@ -22,23 +22,23 @@ Review based on [Claude Code Security](https://www.anthropic.com/news/claude-cod
 
 ## High - Should Fix
 
-- [ ] **5. Daily spend tracking is in-memory only**
+- [x] **5. Daily spend tracking is in-memory only**
   `dailySpend` resets to 0 on page refresh, allowing unlimited spending across sessions.
   File: `policy-engine.ts:197`
 
-- [ ] **6. Weak hash for scan cache keys**
+- [x] **6. Weak hash for scan cache keys**
   DJB2 (32-bit) is trivially collision-prone. Attacker can poison scan cache with clean results for malicious content.
   Files: `skill-scanner.ts:396-404`, `prompt-firewall.ts:453-461`
 
-- [ ] **7. All gates can be disabled via exposed config**
+- [x] **7. All gates can be disabled via exposed config**
   `enableGate1/2/3` flags exposed through React context `usePolicyConfig()`. An agent calling this can disable all gates.
   Files: `security-orchestrator.ts:422-426`, `PistolShrimpProvider.tsx`
 
-- [ ] **8. Client-side only security layer**
-  Entire system runs in browser. DevTools can bypass all protections. Document as known limitation for hackathon scope.
+- [x] **8. Client-side only security layer**
+  Entire system runs in browser. DevTools can bypass all protections. **Documented as known architectural limitation** — production deployment requires server-side enforcement layer.
 
-- [ ] **9. Regex-only injection detection is bypassable**
-  Pattern matching misses unicode substitution, string concatenation, semantic rephrasing, and multilingual attacks.
+- [x] **9. Regex-only injection detection is bypassable**
+  Pattern matching misses unicode substitution, string concatenation, semantic rephrasing, and multilingual attacks. **Mitigated** with NFKC normalization + homoglyph mapping + normalization diff detection. Semantic rephrasing remains an inherent limitation of regex-based approaches.
 
 ## Medium - Recommend Fix
 

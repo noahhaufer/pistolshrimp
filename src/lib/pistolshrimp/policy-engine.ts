@@ -192,6 +192,10 @@ function decodeMethodFromInstruction(programId: string, data: Buffer): string {
 // Policy Engine
 // ============================================================================
 
+const STORAGE_KEY_DAILY_SPEND = 'pistolshrimp_daily_spend';
+const STORAGE_KEY_SPEND_DATE = 'pistolshrimp_spend_date';
+const STORAGE_KEY_TX_HISTORY = 'pistolshrimp_tx_history';
+
 export class PolicyEngine {
   private config: PolicyConfig;
   private dailySpend: number = 0;
@@ -201,6 +205,47 @@ export class PolicyEngine {
 
   constructor(config: Partial<PolicyConfig> = {}) {
     this.config = { ...DEFAULT_POLICY_CONFIG, ...config };
+    this.restorePersistedState();
+  }
+
+  // Restore spend tracking from localStorage
+  private restorePersistedState(): void {
+    try {
+      const storedDate = localStorage.getItem(STORAGE_KEY_SPEND_DATE);
+      const today = new Date().toDateString();
+
+      if (storedDate === today) {
+        const storedSpend = localStorage.getItem(STORAGE_KEY_DAILY_SPEND);
+        if (storedSpend) {
+          this.dailySpend = parseFloat(storedSpend);
+        }
+      } else {
+        // New day — clear stored spend
+        localStorage.removeItem(STORAGE_KEY_DAILY_SPEND);
+        localStorage.setItem(STORAGE_KEY_SPEND_DATE, today);
+      }
+
+      const storedHistory = localStorage.getItem(STORAGE_KEY_TX_HISTORY);
+      if (storedHistory) {
+        this.transactionHistory = JSON.parse(storedHistory);
+        // Prune entries older than 24h
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        this.transactionHistory = this.transactionHistory.filter(t => t.timestamp > cutoff);
+      }
+    } catch {
+      // localStorage unavailable (SSR, private browsing) — fall back to in-memory
+    }
+  }
+
+  // Persist spend state to localStorage
+  private persistState(): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_DAILY_SPEND, this.dailySpend.toString());
+      localStorage.setItem(STORAGE_KEY_SPEND_DATE, this.lastResetDate);
+      localStorage.setItem(STORAGE_KEY_TX_HISTORY, JSON.stringify(this.transactionHistory.slice(-100)));
+    } catch {
+      // localStorage unavailable — silent fallback
+    }
   }
 
   // Validate an intent against all policies
@@ -443,6 +488,8 @@ export class PolicyEngine {
     if (this.transactionHistory.length > 100) {
       this.transactionHistory = this.transactionHistory.slice(-100);
     }
+
+    this.persistState();
   }
 
   // Get current daily spend
@@ -451,6 +498,7 @@ export class PolicyEngine {
     if (today !== this.lastResetDate) {
       this.dailySpend = 0;
       this.lastResetDate = today;
+      this.persistState();
     }
     return this.dailySpend;
   }

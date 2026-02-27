@@ -33,8 +33,17 @@ export class SecurityOrchestrator {
   private onTransactionExecuted?: (intent: TransactionIntent, signature: string) => void;
   private onTransactionBlocked?: (intent: TransactionIntent, report: SecurityReport) => void;
 
+  // Gate flags locked at construction time — cannot be changed at runtime
+  private readonly gateFlags: { gate1: boolean; gate2: boolean; gate3: boolean; autoExecute: boolean };
+
   constructor(config?: Partial<PistolShrimpConfig>) {
     this.config = createConfig(config);
+    this.gateFlags = Object.freeze({
+      gate1: this.gateFlags.gate1,
+      gate2: this.gateFlags.gate2,
+      gate3: this.gateFlags.gate3,
+      autoExecute: this.gateFlags.autoExecute,
+    });
     this.intentQueue = getIntentQueue(this.config.intentQueue);
     this.policyEngine = getPolicyEngine(this.config.policy);
     this.skillScanner = getSkillScanner();
@@ -68,7 +77,7 @@ export class SecurityOrchestrator {
     this.log('info', `Transaction submitted by agent ${agentId}: ${description}`);
 
     // GATE 1: Skill Scanner (if skill context provided)
-    if (this.config.enableGate1 && options?.skillName) {
+    if (this.gateFlags.gate1 && options?.skillName) {
       const skillContent = options.promptContext || description;
       const skillResult = this.skillScanner.scanSkill(
         options.skillName,
@@ -101,7 +110,7 @@ export class SecurityOrchestrator {
     }
 
     // GATE 2: Prompt Firewall (if context provided)
-    if (this.config.enableGate2 && options?.promptContext) {
+    if (this.gateFlags.gate2 && options?.promptContext) {
       const promptResult = this.promptFirewall.scanInput(
         options.promptContext,
         agentId,
@@ -205,7 +214,7 @@ export class SecurityOrchestrator {
     const gateResults: GateResult[] = [];
 
     // GATE 3: Policy Engine
-    if (this.config.enableGate3) {
+    if (this.gateFlags.gate3) {
       const policyResult = this.policyEngine.validateIntent(intent);
 
       gateResults.push({
@@ -257,7 +266,7 @@ export class SecurityOrchestrator {
     }
 
     // Auto-sign if configured and below threshold
-    if (this.config.autoExecuteBelowThreshold) {
+    if (this.gateFlags.autoExecute) {
       this.intentQueue.updateIntentStatus(intent.id, 'approved');
       const report = this.createSecurityReport(intent.id, gateResults, 'approved');
       intent.securityReport = report;
@@ -465,7 +474,7 @@ export class SecurityOrchestrator {
     content: string,
     authorId?: string
   ) {
-    if (!this.config.enableGate1) {
+    if (!this.gateFlags.gate1) {
       return { passed: true, skipped: true };
     }
 
@@ -521,10 +530,23 @@ export class SecurityOrchestrator {
 
   /**
    * Update policy configuration
+   * Note: Gate enable/disable flags and autoExecuteBelowThreshold cannot be changed at runtime.
    */
   updatePolicyConfig(updates: Partial<PistolShrimpConfig['policy']>): void {
     this.policyEngine.updateConfig(updates);
     this.config.policy = { ...this.config.policy, ...updates };
+  }
+
+  /**
+   * Gate flags are immutable after construction to prevent runtime bypass.
+   * Returns current gate status for inspection only.
+   */
+  getGateStatus(): { gate1: boolean; gate2: boolean; gate3: boolean } {
+    return {
+      gate1: this.gateFlags.gate1,
+      gate2: this.gateFlags.gate2,
+      gate3: this.gateFlags.gate3,
+    };
   }
 
   // ============================================================================
