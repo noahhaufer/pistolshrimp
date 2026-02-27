@@ -17,11 +17,11 @@ export default function Landing() {
       <Navigation />
       <Hero />
       <Divider />
+      <Quickstart />
+      <Divider />
       <SecurityBreaches />
       <Divider />
       <Architecture />
-      <Divider />
-      <Quickstart />
       <Divider />
       <TerminalDemo />
       <Divider />

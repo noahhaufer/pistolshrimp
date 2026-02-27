@@ -182,7 +182,6 @@ export function SecurityBreaches() {
           </h2>
           <p className="text-muted-foreground text-center max-w-2xl mx-auto">
             512 vulnerabilities. 40,000+ exposed instances. 1,467 malicious skills.
-            These aren't hypotheticals — they're headlines.
           </p>
         </FadeIn>
       </div>
