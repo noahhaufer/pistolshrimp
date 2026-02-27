@@ -61,10 +61,10 @@ Review based on [Claude Code Security](https://www.anthropic.com/news/claude-cod
 
 ## Low - Nice to Have
 
-- [ ] **15. `Math.random()` for ID generation**
+- [x] **15. `Math.random()` for ID generation**
   Intent IDs are guessable. Combined with #4, attacker could guess and confirm other intents.
   Files: `intent-queue.ts:27`, `security-orchestrator.ts:477`
 
-- [ ] **16. Unbounded token approval check too narrow**
+- [x] **16. Unbounded token approval check too narrow**
   Only checks `MAX_SAFE_INTEGER` and `>1e15`. Real unlimited approvals use `u64::MAX`.
   File: `policy-engine.ts:297-306`

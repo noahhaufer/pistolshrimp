@@ -115,6 +115,18 @@ export function decodeTransaction(
           }
         }
 
+        // Decode Token Program approve: extract raw amount bytes for u64::MAX detection
+        if (programId === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' && ix.data[0] === 4 && ix.data.length >= 9) {
+          const amountBytes = ix.data.slice(1, 9);
+          decoded.params._rawAmountBytes = new Uint8Array(amountBytes);
+          // Best-effort numeric decode (loses precision for u64::MAX)
+          try {
+            decoded.params.amount = Number(ix.data.readBigUInt64LE(1));
+          } catch {
+            decoded.params.amount = Infinity;
+          }
+        }
+
         instructions.push(decoded);
       }
     } else {
@@ -380,8 +392,21 @@ export class PolicyEngine {
     for (const decoded of allDecodedInstructions) {
       if (decoded.method === 'approve') {
         const approvalAmount = decoded.params.amount as number;
-        // Check for u64::MAX and other common unlimited values
-        if (approvalAmount === Number.MAX_SAFE_INTEGER || approvalAmount > 1e15 || approvalAmount === 18446744073709551615) {
+        // Flag unlimited or excessively large approvals
+        // u64::MAX (18446744073709551615) loses precision as Number, so check multiple ways:
+        // - Exceeds any reasonable approval amount (>1e12 tokens)
+        // - Equals MAX_SAFE_INTEGER (common JS stand-in for unlimited)
+        // - Raw amount param is undefined/NaN (failed decode = suspicious)
+        const isUnlimited = approvalAmount === Number.MAX_SAFE_INTEGER
+          || approvalAmount > 1e12
+          || (approvalAmount !== undefined && !Number.isFinite(approvalAmount));
+
+        // Also check raw instruction data for u64::MAX bytes (ff ff ff ff ff ff ff ff)
+        const rawApprovalMax = decoded.params._rawAmountBytes as Uint8Array | undefined;
+        const isRawMax = rawApprovalMax && rawApprovalMax.length === 8
+          && rawApprovalMax.every(b => b === 0xff);
+
+        if (isUnlimited || isRawMax) {
           violations.push({
             rule: 'unlimited_approval',
             severity: 'critical',

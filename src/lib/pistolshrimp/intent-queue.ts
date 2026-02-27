@@ -22,9 +22,12 @@ export class IntentQueue {
     this.config = { ...DEFAULT_INTENT_QUEUE_CONFIG, ...config };
   }
 
-  // Generate unique intent ID
+  // Generate cryptographically random intent ID
   private generateIntentId(): string {
-    return `intent_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `intent_${Date.now()}_${hex}`;
   }
 
   // Rate limit key: wallet-scoped when available, falls back to agentId
