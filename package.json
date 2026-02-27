@@ -1,17 +1,72 @@
 {
-  "name": "plena-react-starter-app",
-  "private": true,
-  "version": "0.0.0",
+  "name": "pistolshrimp",
+  "version": "0.1.0",
   "type": "module",
+  "description": "Security SDK for Solana agent transactions — three-gate validation, intent queues, and policy enforcement",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/noahhaufer/pistolshrimp"
+  },
+  "keywords": [
+    "solana",
+    "security",
+    "sdk",
+    "agent",
+    "transaction",
+    "firewall",
+    "policy-engine",
+    "web3"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    },
+    "./react": {
+      "import": "./dist/react.mjs",
+      "require": "./dist/react.cjs",
+      "types": "./dist/react.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
+    "build:lib": "vite build --config vite.config.lib.ts",
     "lint": "eslint .",
     "preview": "vite preview",
-    "watch": "vite build --watch"
+    "watch": "vite build --watch",
+    "prepublishOnly": "npm run build:lib"
+  },
+  "peerDependencies": {
+    "@coral-xyz/anchor": "^0.30.0",
+    "@solana/spl-token": ">=0.4.0",
+    "@solana/wallet-adapter-base": "^0.9.0",
+    "@solana/wallet-adapter-react": "^0.15.0",
+    "@solana/web3.js": "^1.90.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "@solana/wallet-adapter-react": {
+      "optional": true
+    }
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.30.0",
     "@hookform/resolvers": "^3.9.1",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
@@ -40,27 +95,23 @@
     "@radix-ui/react-toggle": "1.1.1",
     "@radix-ui/react-toggle-group": "1.1.1",
     "@radix-ui/react-tooltip": "1.1.6",
-    "@solana/spl-token": "0.4.13",
-    "@supabase/supabase-js": "^2.57.4",
-    "@solana/wallet-adapter-base": "^0.9.26",
-    "@solana/wallet-adapter-react": "^0.15.38",
+    "@remotion/player": "^4.0.429",
     "@solana/wallet-adapter-react-ui": "^0.9.38",
     "@solana/wallet-adapter-wallets": "^0.19.36",
-    "@solana/web3.js": "^1.98.2",
+    "@supabase/supabase-js": "^2.57.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "embla-carousel-react": "8.5.1",
     "framer-motion": "^12.7.4",
     "lucide-react": "^0.454.0",
-    "react": "^18.3.1",
     "react-copy-to-clipboard": "^5.1.0",
     "react-day-picker": "8.10.1",
-    "react-dom": "^18.3.1",
     "react-hook-form": "^7.54.1",
     "react-resizable-panels": "^2.1.7",
     "react-router-dom": "^6.22.1",
     "recharts": "^2.12.7",
+    "remotion": "^4.0.429",
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.6"
@@ -79,6 +130,7 @@
     "tailwindcss": "^3.4.11",
     "typescript": "^5.5.3",
     "typescript-eslint": "^8.3.0",
-    "vite": "^5.4.1"
+    "vite": "^5.4.1",
+    "vite-plugin-dts": "^4.5.4"
   }
 }

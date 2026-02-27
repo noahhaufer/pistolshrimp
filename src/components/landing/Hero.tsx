@@ -63,11 +63,16 @@ function ShockwaveBlast({ fired }: { fired: boolean }) {
 }
 
 export function Hero() {
-  const [fired, setFired] = useState(false);
+  const [fireCount, setFireCount] = useState(0);
+  const fired = fireCount > 0;
 
   useEffect(() => {
-    const timer = setTimeout(() => setFired(true), 1000);
-    return () => clearTimeout(timer);
+    const initial = setTimeout(() => setFireCount(1), 1000);
+    const interval = setInterval(() => setFireCount((c) => c + 1), 15000);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(interval);
+    };
   }, []);
 
   return (
@@ -76,6 +81,7 @@ export function Hero() {
         <div className="flex items-center justify-center gap-4 mb-6">
           <div className="relative">
             <motion.img
+              key={`recoil-${fireCount}`}
               src="/logo-transparent.png"
               alt="Pistol Shrimp"
               className="w-16 h-16 sm:w-20 sm:h-20 object-contain"
@@ -93,10 +99,30 @@ export function Hero() {
                 ease: [0.22, 1.2, 0.36, 1],
               }}
             />
-            <ShockwaveBlast fired={fired} />
+            <ShockwaveBlast key={`blast-${fireCount}`} fired={fired} />
           </div>
-          <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold text-white">
-            Pistol Shrimp
+          <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold text-white flex">
+            {'Pistol Shrimp'.split('').map((char, i) => (
+              <motion.span
+                key={`${fireCount}-${i}`}
+                animate={
+                  fired
+                    ? {
+                        y: [0, -6, 0, 3, 0],
+                        opacity: [1, 1, 1, 1, 1],
+                      }
+                    : {}
+                }
+                transition={{
+                  duration: 0.5,
+                  delay: 0.1 + i * 0.03,
+                  ease: 'easeOut',
+                }}
+                className={char === ' ' ? 'w-[0.3em]' : ''}
+              >
+                {char === ' ' ? '\u00A0' : char}
+              </motion.span>
+            ))}
           </h1>
         </div>
 

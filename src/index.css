@@ -5,38 +5,49 @@
 @layer base {
   :root {
     /* Pistol Shrimp Security Theme - Dark with Cyan accents */
-    --background: 220 20% 4%;
-    --foreground: 210 20% 95%;
+    /* Background: #0a0b0f */
+    --background: 228 23% 5%;
+    --foreground: 240 5% 90%;
 
-    --card: 220 20% 6%;
-    --card-foreground: 210 20% 95%;
+    /* Card: #12141a */
+    --card: 225 19% 9%;
+    --card-foreground: 240 5% 90%;
 
-    --popover: 220 20% 8%;
-    --popover-foreground: 210 20% 95%;
+    --popover: 225 19% 11%;
+    --popover-foreground: 240 5% 90%;
 
     --primary: 187 85% 53%;
-    --primary-foreground: 220 20% 4%;
+    --primary-foreground: 228 23% 5%;
 
-    --secondary: 220 15% 12%;
-    --secondary-foreground: 210 20% 90%;
+    --secondary: 225 19% 9%;
+    --secondary-foreground: 240 5% 85%;
 
+    /* Muted: #71717a */
     --muted: 220 15% 15%;
-    --muted-foreground: 215 15% 55%;
+    --muted-foreground: 240 4% 46%;
 
     --accent: 187 85% 53%;
-    --accent-foreground: 220 20% 4%;
+    --accent-foreground: 228 23% 5%;
 
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 210 20% 98%;
+    /* Destructive: #ff3b5c */
+    --destructive: 350 100% 62%;
+    --destructive-foreground: 0 0% 100%;
 
-    --success: 142 71% 45%;
-    --success-foreground: 220 20% 4%;
+    /* Success: #00e59b */
+    --success: 161 100% 45%;
+    --success-foreground: 228 23% 5%;
 
-    --warning: 38 92% 50%;
-    --warning-foreground: 220 20% 4%;
+    /* Warning: #ffb020 */
+    --warning: 39 100% 56%;
+    --warning-foreground: 228 23% 5%;
 
-    --border: 220 15% 18%;
-    --input: 220 15% 12%;
+    /* Info: #3b82f6 */
+    --info: 217 91% 60%;
+    --info-foreground: 228 23% 5%;
+
+    /* Border: #27272a */
+    --border: 240 4% 16%;
+    --input: 225 19% 9%;
     --ring: 187 85% 53%;
 
     --radius: 0.75rem;
@@ -293,122 +304,3 @@
   }
 }
 
-@keyframes pulse-slow {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-@keyframes ping-slow {
-  0% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  75%, 100% {
-    transform: scale(2);
-    opacity: 0;
-  }
-}
-
-/* Landing Page Specific Styles */
-.bg-landing-bg {
-  background-color: #0a0b0f;
-}
-
-.text-landing-text {
-  color: #e4e4e7;
-}
-
-.text-landing-muted {
-  color: #71717a;
-}
-
-.text-landing-danger {
-  color: #ff3b5c;
-}
-
-.text-landing-warning {
-  color: #ffb020;
-}
-
-.text-landing-success {
-  color: #00e59b;
-}
-
-.text-landing-info {
-  color: #3b82f6;
-}
-
-.bg-landing-danger {
-  background-color: #ff3b5c;
-}
-
-.bg-landing-warning {
-  background-color: #ffb020;
-}
-
-.bg-landing-success {
-  background-color: #00e59b;
-}
-
-.bg-landing-card {
-  background-color: #12141a;
-}
-
-.border-landing-border {
-  border-color: #27272a;
-}
-
-.border-landing-danger {
-  border-color: #ff3b5c;
-}
-
-.border-landing-warning {
-  border-color: #ffb020;
-}
-
-.border-landing-success {
-  border-color: #00e59b;
-}
-
-.border-t-landing-danger {
-  border-top-color: #ff3b5c;
-}
-
-.border-t-landing-warning {
-  border-top-color: #ffb020;
-}
-
-.border-t-landing-info {
-  border-top-color: #3b82f6;
-}
-
-.animate-pulse-slow {
-  animation: pulse-slow 2s ease-in-out infinite;
-}
-
-.animate-ping-slow {
-  animation: ping-slow 2s cubic-bezier(0, 0, 0.2, 1) infinite;
-}
-
-.ring-landing-bg {
-  --tw-ring-color: #0a0b0f;
-}
-
-/* Scanline overlay effect */
-.scanline-overlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 100;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.03) 2px,
-    rgba(0, 0, 0, 0.03) 4px
-  );
-}

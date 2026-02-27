@@ -4,10 +4,15 @@ import { FadeIn } from './FadeIn';
 
 const installCommand = 'npm install pistolshrimp';
 
-const wrapSnippet = `import { PistolShrimp } from 'pistolshrimp';
+const wrapSnippet = `import { getSecurityOrchestrator } from 'pistolshrimp';
 
-const shrimp = new PistolShrimp({ wallet, rpcUrl });
-await shrimp.wrap(agent);`;
+const shrimp = getSecurityOrchestrator({
+  policy: { autoSignBelowSol: 0.1, dailyLimitSol: 10 }
+});
+
+const result = await shrimp.submitTransaction(
+  agentId, 'Swap 2 SOL for USDC', transaction
+);`;
 
 export function Quickstart() {
   const [copiedInstall, setCopiedInstall] = useState(false);
