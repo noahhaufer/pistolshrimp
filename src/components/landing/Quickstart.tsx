@@ -4,14 +4,16 @@ import { FadeIn } from './FadeIn';
 
 const installCommand = 'npm install pistolshrimp';
 
-const wrapSnippet = `import { getSecurityOrchestrator } from 'pistolshrimp';
+const wrapSnippet = `import { SecurityOrchestrator } from 'pistolshrimp';
 
-const shrimp = getSecurityOrchestrator({
-  policy: { autoSignBelowSol: 0.1, dailyLimitSol: 10 }
-});
+// Every agent transaction goes through the three-gate pipeline
+const shrimp = new SecurityOrchestrator();
 
+// Gate 1: Skill Scanner  → malware & threat detection
+// Gate 2: Prompt Firewall → injection attack filtering
+// Gate 3: Policy Engine   → spending limits & allowlists
 const result = await shrimp.submitTransaction(
-  agentId, 'Swap 2 SOL for USDC', transaction
+  agentId, description, transaction
 );`;
 
 export function Quickstart() {
