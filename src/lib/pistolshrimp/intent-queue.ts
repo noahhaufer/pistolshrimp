@@ -27,35 +27,55 @@ export class IntentQueue {
     return `intent_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
 
-  // Get or create rate limit state for an agent
-  private getRateLimitState(agentId: string): RateLimitState {
-    let state = this.rateLimits.get(agentId);
+  // Rate limit key: wallet-scoped when available, falls back to agentId
+  private rateLimitKey(agentId: string, walletAddress?: string): string {
+    return walletAddress ? `${walletAddress}:${agentId}` : agentId;
+  }
+
+  // Get or create rate limit state for an agent (keyed by wallet+agent)
+  private getRateLimitState(agentId: string, walletAddress?: string): RateLimitState {
+    const key = this.rateLimitKey(agentId, walletAddress);
+    let state = this.rateLimits.get(key);
     if (!state) {
       state = {
-        agentId,
+        agentId: key,
         intentsInWindow: 0,
         windowStart: Date.now(),
         consecutiveRejections: 0,
         cooldownUntil: null,
         lastSubmission: 0,
       };
-      this.rateLimits.set(agentId, state);
+      this.rateLimits.set(key, state);
     }
     return state;
   }
 
-  // Check if agent is within rate limits
-  checkRateLimit(agentId: string): { allowed: boolean; reason?: string; waitMs?: number } {
-    const state = this.getRateLimitState(agentId);
-    const now = Date.now();
+  // Also enforce a per-wallet global limit across all agents
+  private getWalletRateLimitState(walletAddress: string): RateLimitState {
+    const key = `wallet:${walletAddress}`;
+    let state = this.rateLimits.get(key);
+    if (!state) {
+      state = {
+        agentId: key,
+        intentsInWindow: 0,
+        windowStart: Date.now(),
+        consecutiveRejections: 0,
+        cooldownUntil: null,
+        lastSubmission: 0,
+      };
+      this.rateLimits.set(key, state);
+    }
+    return state;
+  }
 
+  // Check a single rate limit state against config
+  private checkSingleRateLimit(state: RateLimitState, now: number): { allowed: boolean; reason?: string; waitMs?: number } {
     // Check cooldown
     if (state.cooldownUntil && now < state.cooldownUntil) {
-      const waitMs = state.cooldownUntil - now;
       return {
         allowed: false,
-        reason: `Agent in cooldown after ${state.consecutiveRejections} consecutive rejections`,
-        waitMs,
+        reason: `${state.agentId} in cooldown after ${state.consecutiveRejections} consecutive rejections`,
+        waitMs: state.cooldownUntil - now,
       };
     }
 
@@ -67,12 +87,30 @@ export class IntentQueue {
 
     // Check window limit
     if (state.intentsInWindow >= this.config.maxIntentsPerWindow) {
-      const waitMs = state.windowStart + this.config.windowDurationMs - now;
       return {
         allowed: false,
-        reason: `Rate limit exceeded: ${state.intentsInWindow}/${this.config.maxIntentsPerWindow} intents in window`,
-        waitMs,
+        reason: `Rate limit exceeded for ${state.agentId}: ${state.intentsInWindow}/${this.config.maxIntentsPerWindow} intents in window`,
+        waitMs: state.windowStart + this.config.windowDurationMs - now,
       };
+    }
+
+    return { allowed: true };
+  }
+
+  // Check if agent is within rate limits (checks both per-agent and per-wallet)
+  checkRateLimit(agentId: string, walletAddress?: string): { allowed: boolean; reason?: string; waitMs?: number } {
+    const now = Date.now();
+
+    // Check per-agent+wallet rate limit
+    const agentState = this.getRateLimitState(agentId, walletAddress);
+    const agentCheck = this.checkSingleRateLimit(agentState, now);
+    if (!agentCheck.allowed) return agentCheck;
+
+    // Check per-wallet global rate limit (catches multiple agentIds from same wallet)
+    if (walletAddress) {
+      const walletState = this.getWalletRateLimitState(walletAddress);
+      const walletCheck = this.checkSingleRateLimit(walletState, now);
+      if (!walletCheck.allowed) return walletCheck;
     }
 
     // Check queue depth
@@ -117,10 +155,13 @@ export class IntentQueue {
       rawInstruction?: string;
       transaction?: Transaction | VersionedTransaction;
       metadata?: TransactionIntent['metadata'];
+      walletAddress?: string;
     }
   ): { success: boolean; intent?: TransactionIntent; error?: string } {
-    // Check rate limit
-    const rateLimitCheck = this.checkRateLimit(agentId);
+    const walletAddress = options?.walletAddress;
+
+    // Check rate limit (per-agent + per-wallet)
+    const rateLimitCheck = this.checkRateLimit(agentId, walletAddress);
     if (!rateLimitCheck.allowed) {
       this.log('warn', `Rate limit blocked intent from ${agentId}: ${rateLimitCheck.reason}`);
       return { success: false, error: rateLimitCheck.reason };
@@ -137,6 +178,7 @@ export class IntentQueue {
     const intent: TransactionIntent = {
       id: this.generateIntentId(),
       agentId,
+      ownerWallet: walletAddress,
       description,
       program,
       method,
@@ -151,10 +193,17 @@ export class IntentQueue {
       metadata: options?.metadata,
     };
 
-    // Update rate limit state
-    const state = this.getRateLimitState(agentId);
-    state.intentsInWindow++;
-    state.lastSubmission = Date.now();
+    // Update per-agent rate limit state
+    const agentState = this.getRateLimitState(agentId, walletAddress);
+    agentState.intentsInWindow++;
+    agentState.lastSubmission = Date.now();
+
+    // Update per-wallet rate limit state
+    if (walletAddress) {
+      const walletState = this.getWalletRateLimitState(walletAddress);
+      walletState.intentsInWindow++;
+      walletState.lastSubmission = Date.now();
+    }
 
     // Add to queue
     this.intents.set(intent.id, intent);
@@ -171,22 +220,37 @@ export class IntentQueue {
     const oldStatus = intent.status;
     intent.status = status;
 
-    // Track rejections for cooldown
+    // Track rejections for cooldown (both agent and wallet levels)
     if (status === 'rejected') {
-      const state = this.getRateLimitState(intent.agentId);
+      const state = this.getRateLimitState(intent.agentId, intent.ownerWallet);
       state.consecutiveRejections++;
-      
+
       if (state.consecutiveRejections >= this.config.maxConsecutiveRejections) {
-        // Apply exponential backoff cooldown
         const backoffMultiplier = Math.pow(2, state.consecutiveRejections - this.config.maxConsecutiveRejections);
         state.cooldownUntil = Date.now() + this.config.cooldownMs * backoffMultiplier;
         this.log('warn', `Agent ${intent.agentId} entered cooldown until ${new Date(state.cooldownUntil).toISOString()}`);
       }
+
+      // Also track at wallet level
+      if (intent.ownerWallet) {
+        const walletState = this.getWalletRateLimitState(intent.ownerWallet);
+        walletState.consecutiveRejections++;
+        if (walletState.consecutiveRejections >= this.config.maxConsecutiveRejections) {
+          const backoffMultiplier = Math.pow(2, walletState.consecutiveRejections - this.config.maxConsecutiveRejections);
+          walletState.cooldownUntil = Date.now() + this.config.cooldownMs * backoffMultiplier;
+          this.log('warn', `Wallet ${intent.ownerWallet} entered cooldown`);
+        }
+      }
     } else if (status === 'executed' || status === 'approved') {
-      // Reset consecutive rejections on success
-      const state = this.getRateLimitState(intent.agentId);
+      const state = this.getRateLimitState(intent.agentId, intent.ownerWallet);
       state.consecutiveRejections = 0;
       state.cooldownUntil = null;
+
+      if (intent.ownerWallet) {
+        const walletState = this.getWalletRateLimitState(intent.ownerWallet);
+        walletState.consecutiveRejections = 0;
+        walletState.cooldownUntil = null;
+      }
     }
 
     this.log('info', `Intent ${intentId} status: ${oldStatus} -> ${status}`, { intentId });

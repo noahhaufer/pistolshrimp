@@ -41,6 +41,21 @@ export class SkillScanner {
     // Normalize content to defeat unicode evasion
     const normalizedContent = content.normalize('NFKC');
 
+    // Cap scan length to prevent ReDoS
+    const MAX_SCAN_LENGTH = 100_000;
+    const scanContent = normalizedContent.length > MAX_SCAN_LENGTH
+      ? normalizedContent.slice(0, MAX_SCAN_LENGTH)
+      : normalizedContent;
+
+    if (normalizedContent.length > MAX_SCAN_LENGTH) {
+      threats.push({
+        type: 'obfuscated_code',
+        severity: 'medium',
+        description: `Skill content unusually large (${normalizedContent.length} chars) — may contain hidden payload`,
+        indicator: `length: ${normalizedContent.length}`,
+      });
+    }
+
     // Check known malicious authors
     if (authorId && this.threatIntel.knownMaliciousAuthors.includes(authorId)) {
       threats.push({
@@ -61,29 +76,29 @@ export class SkillScanner {
       });
     }
 
-    // Scan normalized content for all threat patterns (defeats unicode evasion)
-    const signatureThreats = this.scanForMalwareSignatures(normalizedContent);
+    // Scan normalized+capped content for all threat patterns
+    const signatureThreats = this.scanForMalwareSignatures(scanContent);
     threats.push(...signatureThreats);
 
-    const c2Threats = this.scanForC2Infrastructure(normalizedContent);
+    const c2Threats = this.scanForC2Infrastructure(scanContent);
     threats.push(...c2Threats);
 
-    const credThreats = this.scanForCredentialTheft(normalizedContent);
+    const credThreats = this.scanForCredentialTheft(scanContent);
     threats.push(...credThreats);
 
-    const shellThreats = this.scanForReverseShells(normalizedContent);
+    const shellThreats = this.scanForReverseShells(scanContent);
     threats.push(...shellThreats);
 
-    const injectionThreats = this.scanForEmbeddedInjection(normalizedContent);
+    const injectionThreats = this.scanForEmbeddedInjection(scanContent);
     threats.push(...injectionThreats);
 
-    const socialThreats = this.scanForSocialEngineering(normalizedContent);
+    const socialThreats = this.scanForSocialEngineering(scanContent);
     threats.push(...socialThreats);
 
-    const obfuscationThreats = this.scanForObfuscation(normalizedContent);
+    const obfuscationThreats = this.scanForObfuscation(scanContent);
     threats.push(...obfuscationThreats);
 
-    const mcpThreats = this.scanForUnauthorizedMCP(normalizedContent);
+    const mcpThreats = this.scanForUnauthorizedMCP(scanContent);
     threats.push(...mcpThreats);
 
     // Calculate risk score

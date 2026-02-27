@@ -42,21 +42,21 @@ Review based on [Claude Code Security](https://www.anthropic.com/news/claude-cod
 
 ## Medium - Recommend Fix
 
-- [ ] **10. Rate limiting is per-agentId, not per-wallet**
+- [x] **10. Rate limiting is per-agentId, not per-wallet**
   Attacker can create multiple agent IDs to bypass rate limits. `agentId` is unauthenticated.
   File: `intent-queue.ts:31-45`
 
-- [ ] **11. Singleton state shared across contexts**
+- [x] **11. Singleton state shared across contexts**
   Global singletons mean multiple wallets/agents share security state (daily spend, quarantine, etc).
 
-- [ ] **12. No transaction simulation**
+- [x] **12. No transaction simulation**
   System never calls `connection.simulateTransaction()`. On-chain simulation would catch CPI attacks and flash loan setups.
 
-- [ ] **13. Description mismatch detection is shallow**
+- [x] **13. Description mismatch detection is shallow**
   Only 3 hardcoded pattern pairs. Misses obvious cases like "mint NFT" hiding `close_account`.
   File: `policy-engine.ts:349-363`
 
-- [ ] **14. Potential ReDoS in regex patterns**
+- [x] **14. Potential ReDoS in regex patterns**
   Nested alternation + quantifiers could cause exponential backtracking with crafted inputs.
 
 ## Low - Nice to Have

@@ -115,6 +115,25 @@ export class PromptFirewall {
 
     // Normalize to catch unicode evasion — patterns run against normalized text
     const normalizedInput = this.normalizeInput(input);
+
+    // Cap input length to prevent ReDoS on crafted long strings
+    const MAX_SCAN_LENGTH = 50_000;
+    if (normalizedInput.length > MAX_SCAN_LENGTH) {
+      injectionAttempts.push({
+        type: 'encoding_attack',
+        severity: 'high',
+        pattern: 'oversized_input',
+        location: `input_length: ${normalizedInput.length}`,
+        blocked: true,
+      });
+      // Still scan, but truncated
+    }
+    const scanInput = normalizedInput.length > MAX_SCAN_LENGTH
+      ? normalizedInput.slice(0, MAX_SCAN_LENGTH)
+      : normalizedInput;
+    const scanOriginal = input.length > MAX_SCAN_LENGTH
+      ? input.slice(0, MAX_SCAN_LENGTH)
+      : input;
     
     // Get or create session
     const session = this.getOrCreateSession(agentId, sessionId);
@@ -132,12 +151,12 @@ export class PromptFirewall {
     }
     session.inputHashes.add(inputHash);
 
-    // Scan normalized input for injection patterns (catches homoglyph evasion)
-    const patternInjections = this.scanForInjectionPatterns(normalizedInput);
+    // Scan normalized+capped input for injection patterns (catches homoglyph evasion)
+    const patternInjections = this.scanForInjectionPatterns(scanInput);
     injectionAttempts.push(...patternInjections);
 
-    // Scan ORIGINAL input for encoding attacks (zero-width chars, base64, etc.)
-    const encodingInjections = this.scanForEncodingAttacks(input);
+    // Scan ORIGINAL (capped) input for encoding attacks (zero-width chars, base64, etc.)
+    const encodingInjections = this.scanForEncodingAttacks(scanOriginal);
     injectionAttempts.push(...encodingInjections);
 
     // Flag if normalization changed the input significantly (evasion attempt)
@@ -152,14 +171,14 @@ export class PromptFirewall {
     }
 
     // Scan for context boundary violations
-    const boundaryInjections = this.scanForBoundaryViolations(normalizedInput, metadata);
+    const boundaryInjections = this.scanForBoundaryViolations(scanInput, metadata);
     injectionAttempts.push(...boundaryInjections);
 
     // Check for context isolation violations
-    const contextIsolationViolation = this.checkContextIsolation(session, normalizedInput);
+    const contextIsolationViolation = this.checkContextIsolation(session, scanInput);
 
     // Check for behavioral drift
-    const behaviorDrift = this.checkBehaviorDrift(session, normalizedInput);
+    const behaviorDrift = this.checkBehaviorDrift(session, scanInput);
 
     // Calculate risk score
     const riskScore = this.calculateRiskScore(

@@ -198,14 +198,25 @@ const STORAGE_KEY_TX_HISTORY = 'pistolshrimp_tx_history';
 
 export class PolicyEngine {
   private config: PolicyConfig;
-  private dailySpend: number = 0;
+  // Per-wallet daily spend tracking (keyed by wallet address, '_global' as fallback)
+  private walletDailySpend: Map<string, number> = new Map();
   private lastResetDate: string = new Date().toDateString();
   private logs: SecurityLogEntry[] = [];
-  private transactionHistory: { timestamp: number; amount: number; program: string }[] = [];
+  private transactionHistory: { timestamp: number; amount: number; program: string; wallet?: string }[] = [];
 
   constructor(config: Partial<PolicyConfig> = {}) {
     this.config = { ...DEFAULT_POLICY_CONFIG, ...config };
     this.restorePersistedState();
+  }
+
+  // Get daily spend for a specific wallet
+  private getWalletSpend(wallet?: string): number {
+    return this.walletDailySpend.get(wallet || '_global') || 0;
+  }
+
+  // Set daily spend for a specific wallet
+  private setWalletSpend(wallet: string | undefined, amount: number): void {
+    this.walletDailySpend.set(wallet || '_global', amount);
   }
 
   // Restore spend tracking from localStorage
@@ -217,7 +228,16 @@ export class PolicyEngine {
       if (storedDate === today) {
         const storedSpend = localStorage.getItem(STORAGE_KEY_DAILY_SPEND);
         if (storedSpend) {
-          this.dailySpend = parseFloat(storedSpend);
+          const parsed = JSON.parse(storedSpend);
+          if (typeof parsed === 'object' && parsed !== null) {
+            // New format: per-wallet map
+            for (const [key, val] of Object.entries(parsed)) {
+              this.walletDailySpend.set(key, val as number);
+            }
+          } else if (typeof parsed === 'number') {
+            // Legacy format: single number → migrate to _global
+            this.walletDailySpend.set('_global', parsed);
+          }
         }
       } else {
         // New day — clear stored spend
@@ -228,7 +248,6 @@ export class PolicyEngine {
       const storedHistory = localStorage.getItem(STORAGE_KEY_TX_HISTORY);
       if (storedHistory) {
         this.transactionHistory = JSON.parse(storedHistory);
-        // Prune entries older than 24h
         const cutoff = Date.now() - 24 * 60 * 60 * 1000;
         this.transactionHistory = this.transactionHistory.filter(t => t.timestamp > cutoff);
       }
@@ -240,7 +259,8 @@ export class PolicyEngine {
   // Persist spend state to localStorage
   private persistState(): void {
     try {
-      localStorage.setItem(STORAGE_KEY_DAILY_SPEND, this.dailySpend.toString());
+      const spendObj = Object.fromEntries(this.walletDailySpend);
+      localStorage.setItem(STORAGE_KEY_DAILY_SPEND, JSON.stringify(spendObj));
       localStorage.setItem(STORAGE_KEY_SPEND_DATE, this.lastResetDate);
       localStorage.setItem(STORAGE_KEY_TX_HISTORY, JSON.stringify(this.transactionHistory.slice(-100)));
     } catch {
@@ -258,9 +278,12 @@ export class PolicyEngine {
     // Reset daily spend if new day
     const today = new Date().toDateString();
     if (today !== this.lastResetDate) {
-      this.dailySpend = 0;
+      this.walletDailySpend.clear();
       this.lastResetDate = today;
     }
+
+    const walletKey = intent.ownerWallet;
+    const dailySpend = this.getWalletSpend(walletKey);
 
     // Decode transaction if available — validate ALL instructions
     let allDecodedInstructions: DecodedInstruction[] = [];
@@ -338,12 +361,12 @@ export class PolicyEngine {
       });
     }
 
-    if (this.dailySpend + amount > this.config.dailyLimitSol) {
+    if (dailySpend + amount > this.config.dailyLimitSol) {
       violations.push({
         rule: 'daily_limit_exceeded',
         severity: 'high',
-        message: `Transaction would exceed daily limit. Current: ${this.dailySpend.toFixed(4)} SOL, Transaction: ${amount} SOL, Limit: ${this.config.dailyLimitSol} SOL`,
-        value: this.dailySpend + amount,
+        message: `Transaction would exceed daily limit. Current: ${dailySpend.toFixed(4)} SOL, Transaction: ${amount} SOL, Limit: ${this.config.dailyLimitSol} SOL`,
+        value: dailySpend + amount,
         threshold: this.config.dailyLimitSol,
       });
     }
@@ -415,17 +438,38 @@ export class PolicyEngine {
     const descLower = description.toLowerCase();
     const method = decoded.method.toLowerCase();
 
-    // Common mismatches to detect
+    // 1. Explicit mismatch pairs: description claims X but method is Y
     const mismatchPatterns: [string[], string[]][] = [
-      [['swap', 'exchange', 'trade'], ['approve', 'set_authority']],
-      [['transfer', 'send'], ['approve', 'mint_to']],
-      [['stake', 'deposit'], ['approve', 'close_account']],
+      // Description says safe action → actual method is dangerous
+      [['swap', 'exchange', 'trade'], ['approve', 'set_authority', 'close_account']],
+      [['transfer', 'send'], ['approve', 'mint_to', 'set_authority']],
+      [['stake', 'deposit', 'lock'], ['approve', 'close_account', 'set_authority', 'transfer']],
+      [['mint', 'create', 'nft'], ['close_account', 'transfer', 'set_authority']],
+      [['claim', 'reward', 'airdrop'], ['approve', 'set_authority', 'transfer']],
+      [['view', 'check', 'read', 'balance'], ['transfer', 'approve', 'set_authority', 'close_account']],
+      [['revoke', 'remove'], ['approve', 'mint_to']],
     ];
 
     for (const [descPatterns, methodPatterns] of mismatchPatterns) {
       const descMatches = descPatterns.some(p => descLower.includes(p));
       const methodMatches = methodPatterns.some(p => method.includes(p));
       if (descMatches && methodMatches) {
+        return true;
+      }
+    }
+
+    // 2. Generic check: description doesn't mention the actual dangerous method at all
+    const dangerousMethods = ['approve', 'set_authority', 'close_account'];
+    if (dangerousMethods.includes(method)) {
+      // If the description doesn't contain any reference to what's actually happening, flag it
+      const methodKeywords: Record<string, string[]> = {
+        'approve': ['approve', 'approval', 'allowance', 'permission', 'authorize'],
+        'set_authority': ['authority', 'owner', 'ownership', 'admin', 'set_authority'],
+        'close_account': ['close', 'closing', 'delete', 'remove account'],
+      };
+      const keywords = methodKeywords[method] || [];
+      const descMentionsMethod = keywords.some(k => descLower.includes(k));
+      if (!descMentionsMethod) {
         return true;
       }
     }
@@ -475,13 +519,15 @@ export class PolicyEngine {
     return { isAnomaly: false, score: 0, reason: '' };
   }
 
-  // Record a completed transaction
-  recordTransaction(amount: number, program: string): void {
-    this.dailySpend += amount;
+  // Record a completed transaction (wallet-scoped)
+  recordTransaction(amount: number, program: string, walletAddress?: string): void {
+    const current = this.getWalletSpend(walletAddress);
+    this.setWalletSpend(walletAddress, current + amount);
     this.transactionHistory.push({
       timestamp: Date.now(),
       amount,
       program,
+      wallet: walletAddress,
     });
 
     // Keep only last 100 transactions
@@ -492,20 +538,20 @@ export class PolicyEngine {
     this.persistState();
   }
 
-  // Get current daily spend
-  getDailySpend(): number {
+  // Get current daily spend (wallet-scoped)
+  getDailySpend(walletAddress?: string): number {
     const today = new Date().toDateString();
     if (today !== this.lastResetDate) {
-      this.dailySpend = 0;
+      this.walletDailySpend.clear();
       this.lastResetDate = today;
       this.persistState();
     }
-    return this.dailySpend;
+    return this.getWalletSpend(walletAddress);
   }
 
-  // Get remaining daily limit
-  getRemainingLimit(): number {
-    return Math.max(0, this.config.dailyLimitSol - this.getDailySpend());
+  // Get remaining daily limit (wallet-scoped)
+  getRemainingLimit(walletAddress?: string): number {
+    return Math.max(0, this.config.dailyLimitSol - this.getDailySpend(walletAddress));
   }
 
   // Update config

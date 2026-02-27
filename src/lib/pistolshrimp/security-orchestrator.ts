@@ -178,6 +178,7 @@ export class SecurityOrchestrator {
         amount: options?.amount,
         recipient: options?.recipient,
         transaction,
+        walletAddress: options?.walletAddress,
         metadata: {
           skillName: options?.skillName,
           transactionSnapshot: transactionSnapshot ? Array.from(transactionSnapshot) : undefined,
@@ -376,6 +377,29 @@ export class SecurityOrchestrator {
     }
 
     try {
+      // Simulate transaction before signing to catch CPI attacks and unexpected failures
+      try {
+        const simResult = intent.transaction instanceof Transaction
+          ? await connection.simulateTransaction(intent.transaction)
+          : await connection.simulateTransaction(intent.transaction);
+
+        if (simResult.value.err) {
+          this.log('error', `Transaction simulation failed for ${intentId}`, { error: simResult.value.err });
+          this.intentQueue.updateIntentStatus(intentId, 'rejected');
+          return {
+            success: false,
+            intentId,
+            status: 'rejected',
+            error: `Transaction simulation failed: ${JSON.stringify(simResult.value.err)}`,
+            securityReport: intent.securityReport,
+          };
+        }
+        this.log('info', `Transaction simulation passed for ${intentId}`);
+      } catch (simError) {
+        // Simulation network error — log but don't block (devnet can be flaky)
+        this.log('warn', `Transaction simulation unavailable for ${intentId}: ${simError instanceof Error ? simError.message : 'unknown'}`)
+      }
+
       // Sign transaction (ephemeral signer pattern - single use)
       const signedTx = await wallet.signTransaction(intent.transaction);
 
@@ -392,7 +416,7 @@ export class SecurityOrchestrator {
 
       // Update state
       this.intentQueue.updateIntentStatus(intentId, 'executed');
-      this.policyEngine.recordTransaction(intent.amount || 0, intent.program);
+      this.policyEngine.recordTransaction(intent.amount || 0, intent.program, intent.ownerWallet);
 
       this.log('info', `Transaction executed: ${signature}`, { intentId, signature });
       this.onTransactionExecuted?.(intent, signature);
