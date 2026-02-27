@@ -1,0 +1,414 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Pistol Shrimp Security Theme - Dark with Cyan accents */
+    --background: 220 20% 4%;
+    --foreground: 210 20% 95%;
+
+    --card: 220 20% 6%;
+    --card-foreground: 210 20% 95%;
+
+    --popover: 220 20% 8%;
+    --popover-foreground: 210 20% 95%;
+
+    --primary: 187 85% 53%;
+    --primary-foreground: 220 20% 4%;
+
+    --secondary: 220 15% 12%;
+    --secondary-foreground: 210 20% 90%;
+
+    --muted: 220 15% 15%;
+    --muted-foreground: 215 15% 55%;
+
+    --accent: 187 85% 53%;
+    --accent-foreground: 220 20% 4%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 98%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 220 20% 4%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 220 20% 4%;
+
+    --border: 220 15% 18%;
+    --input: 220 15% 12%;
+    --ring: 187 85% 53%;
+
+    --radius: 0.75rem;
+
+    /* Security Gate Colors */
+    --gate-1: 280 65% 55%;
+    --gate-2: 220 85% 60%;
+    --gate-3: 142 71% 45%;
+    --gate-blocked: 0 72% 51%;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(187 85% 53%) 0%, hsl(187 75% 40%) 100%);
+    --gradient-dark: linear-gradient(180deg, hsl(220 20% 6%) 0%, hsl(220 20% 3%) 100%);
+    --gradient-glow: radial-gradient(ellipse at center, hsl(187 85% 53% / 0.15) 0%, transparent 70%);
+    --gradient-security: linear-gradient(135deg, hsl(280 65% 55% / 0.1) 0%, hsl(187 85% 53% / 0.1) 50%, hsl(142 71% 45% / 0.1) 100%);
+
+    /* Shadows */
+    --shadow-glow: 0 0 30px hsl(187 85% 53% / 0.3);
+    --shadow-card: 0 4px 24px hsl(0 0% 0% / 0.4);
+    --shadow-danger: 0 0 20px hsl(0 72% 51% / 0.4);
+
+    /* Animation timing */
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-smooth: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  /* Security Card Styles */
+  .security-card {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+  }
+
+  .security-card-glow {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--primary) / 0.3);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-glow);
+  }
+
+  /* Gate Status Indicators */
+  .gate-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+
+  .gate-pass {
+    background: hsl(var(--success));
+    box-shadow: 0 0 10px hsl(var(--success) / 0.5);
+  }
+
+  .gate-fail {
+    background: hsl(var(--destructive));
+    box-shadow: 0 0 10px hsl(var(--destructive) / 0.5);
+  }
+
+  .gate-pending {
+    background: hsl(var(--warning));
+    box-shadow: 0 0 10px hsl(var(--warning) / 0.5);
+  }
+
+  /* Intent Queue Styles */
+  .intent-item {
+    background: hsl(var(--secondary));
+    border: 1px solid hsl(var(--border));
+    border-radius: calc(var(--radius) - 2px);
+    transition: var(--transition-smooth);
+  }
+
+  .intent-item:hover {
+    border-color: hsl(var(--primary) / 0.5);
+    box-shadow: 0 0 15px hsl(var(--primary) / 0.1);
+  }
+
+  /* Button Variants */
+  .btn-security {
+    background: var(--gradient-primary);
+    color: hsl(var(--primary-foreground));
+    font-weight: 600;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius);
+    transition: var(--transition-smooth);
+    box-shadow: var(--shadow-glow);
+  }
+
+  .btn-security:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 40px hsl(var(--primary) / 0.4);
+  }
+
+  .btn-danger {
+    background: hsl(var(--destructive));
+    color: hsl(var(--destructive-foreground));
+    font-weight: 600;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius);
+    transition: var(--transition-smooth);
+  }
+
+  .btn-danger:hover {
+    box-shadow: var(--shadow-danger);
+  }
+
+  /* Status Badge */
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .status-safe {
+    background: hsl(var(--success) / 0.15);
+    color: hsl(var(--success));
+    border: 1px solid hsl(var(--success) / 0.3);
+  }
+
+  .status-warning {
+    background: hsl(var(--warning) / 0.15);
+    color: hsl(var(--warning));
+    border: 1px solid hsl(var(--warning) / 0.3);
+  }
+
+  .status-danger {
+    background: hsl(var(--destructive) / 0.15);
+    color: hsl(var(--destructive));
+    border: 1px solid hsl(var(--destructive) / 0.3);
+  }
+
+  /* Code/Hash Display */
+  .code-display {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    background: hsl(var(--background));
+    padding: 0.25rem 0.5rem;
+    border-radius: calc(var(--radius) - 4px);
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* Wallet Button Override */
+  .wallet-adapter-button {
+    background: var(--gradient-primary) !important;
+    color: hsl(var(--primary-foreground)) !important;
+    border-radius: var(--radius) !important;
+    font-weight: 600 !important;
+    transition: var(--transition-smooth) !important;
+    height: 44px !important;
+  }
+
+  .wallet-adapter-button:hover {
+    box-shadow: var(--shadow-glow) !important;
+    transform: translateY(-1px) !important;
+  }
+
+  .wallet-adapter-button-trigger {
+    background: hsl(var(--secondary)) !important;
+    border: 1px solid hsl(var(--border)) !important;
+  }
+
+  .wallet-adapter-dropdown-list {
+    background: hsl(var(--popover)) !important;
+    border: 1px solid hsl(var(--border)) !important;
+    border-radius: var(--radius) !important;
+  }
+
+  .wallet-adapter-dropdown-list-item {
+    color: hsl(var(--foreground)) !important;
+  }
+
+  .wallet-adapter-dropdown-list-item:hover {
+    background: hsl(var(--secondary)) !important;
+  }
+
+  .wallet-adapter-modal-wrapper {
+    background: hsl(var(--background) / 0.95) !important;
+  }
+
+  .wallet-adapter-modal-container {
+    background: hsl(var(--card)) !important;
+    border: 1px solid hsl(var(--border)) !important;
+    border-radius: var(--radius) !important;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .bg-gradient-security {
+    background: var(--gradient-security);
+  }
+
+  .glow-primary {
+    box-shadow: var(--shadow-glow);
+  }
+
+  .glow-danger {
+    box-shadow: var(--shadow-danger);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes shield-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+  }
+}
+
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes ping-slow {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+/* Landing Page Specific Styles */
+.bg-landing-bg {
+  background-color: #0a0b0f;
+}
+
+.text-landing-text {
+  color: #e4e4e7;
+}
+
+.text-landing-muted {
+  color: #71717a;
+}
+
+.text-landing-danger {
+  color: #ff3b5c;
+}
+
+.text-landing-warning {
+  color: #ffb020;
+}
+
+.text-landing-success {
+  color: #00e59b;
+}
+
+.text-landing-info {
+  color: #3b82f6;
+}
+
+.bg-landing-danger {
+  background-color: #ff3b5c;
+}
+
+.bg-landing-warning {
+  background-color: #ffb020;
+}
+
+.bg-landing-success {
+  background-color: #00e59b;
+}
+
+.bg-landing-card {
+  background-color: #12141a;
+}
+
+.border-landing-border {
+  border-color: #27272a;
+}
+
+.border-landing-danger {
+  border-color: #ff3b5c;
+}
+
+.border-landing-warning {
+  border-color: #ffb020;
+}
+
+.border-landing-success {
+  border-color: #00e59b;
+}
+
+.border-t-landing-danger {
+  border-top-color: #ff3b5c;
+}
+
+.border-t-landing-warning {
+  border-top-color: #ffb020;
+}
+
+.border-t-landing-info {
+  border-top-color: #3b82f6;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s ease-in-out infinite;
+}
+
+.animate-ping-slow {
+  animation: ping-slow 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.ring-landing-bg {
+  --tw-ring-color: #0a0b0f;
+}
+
+/* Scanline overlay effect */
+.scanline-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+}
