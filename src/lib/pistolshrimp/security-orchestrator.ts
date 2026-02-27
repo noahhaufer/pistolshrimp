@@ -62,9 +62,43 @@ export class SecurityOrchestrator {
       recipient?: string;
       skillName?: string;
       promptContext?: string;
+      walletAddress?: string;
     }
   ): Promise<SecureTransactionResult> {
     this.log('info', `Transaction submitted by agent ${agentId}: ${description}`);
+
+    // GATE 1: Skill Scanner (if skill context provided)
+    if (this.config.enableGate1 && options?.skillName) {
+      const skillContent = options.promptContext || description;
+      const skillResult = this.skillScanner.scanSkill(
+        options.skillName,
+        options.skillName,
+        agentId,
+        skillContent,
+        agentId
+      );
+
+      if (!skillResult.passed) {
+        const report = this.createSecurityReport('gate1_blocked', [
+          {
+            gate: 1,
+            name: 'Skill Scanner',
+            status: 'fail',
+            message: `Skill quarantined: ${skillResult.threats.length} threats detected (risk: ${skillResult.riskScore})`,
+            details: { threats: skillResult.threats, riskScore: skillResult.riskScore },
+            timestamp: Date.now(),
+          },
+        ]);
+
+        return {
+          success: false,
+          intentId: 'blocked_gate1',
+          status: 'rejected',
+          error: 'Transaction blocked by skill scanner',
+          securityReport: report,
+        };
+      }
+    }
 
     // GATE 2: Prompt Firewall (if context provided)
     if (this.config.enableGate2 && options?.promptContext) {
@@ -113,6 +147,17 @@ export class SecurityOrchestrator {
       }
     }
 
+    // Snapshot transaction bytes at submission time to detect later mutation
+    let transactionSnapshot: Uint8Array | undefined;
+    if (transaction) {
+      try {
+        transactionSnapshot = transaction.serialize({ requireAllSignatures: false, verifySignatures: false });
+      } catch {
+        // VersionedTransaction.serialize() doesn't take options
+        transactionSnapshot = transaction.serialize();
+      }
+    }
+
     // Submit to intent queue
     const submitResult = this.intentQueue.submitIntent(
       agentId,
@@ -126,6 +171,7 @@ export class SecurityOrchestrator {
         transaction,
         metadata: {
           skillName: options?.skillName,
+          transactionSnapshot: transactionSnapshot ? Array.from(transactionSnapshot) : undefined,
         },
       }
     );
@@ -140,6 +186,11 @@ export class SecurityOrchestrator {
     }
 
     const intent = submitResult.intent;
+
+    // Set owner wallet for authorization checks
+    if (options?.walletAddress) {
+      intent.ownerWallet = options.walletAddress;
+    }
 
     // Process the intent through remaining gates
     return this.processIntent(intent);
@@ -260,6 +311,18 @@ export class SecurityOrchestrator {
       };
     }
 
+    // Ownership check: wallet executing must match the intent owner
+    const executorWallet = wallet.publicKey?.toBase58();
+    if (intent.ownerWallet && executorWallet && intent.ownerWallet !== executorWallet) {
+      this.log('error', `Unauthorized execution attempt for ${intentId}: wallet ${executorWallet} != owner ${intent.ownerWallet}`);
+      return {
+        success: false,
+        intentId,
+        status: 'rejected',
+        error: 'Wallet does not own this intent',
+      };
+    }
+
     if (!intent.transaction) {
       return {
         success: false,
@@ -276,6 +339,31 @@ export class SecurityOrchestrator {
         status: 'rejected',
         error: 'Wallet does not support signing',
       };
+    }
+
+    // Re-validate: compare current transaction bytes against snapshot taken at approval time
+    const snapshot = intent.metadata?.transactionSnapshot as number[] | undefined;
+    if (snapshot) {
+      let currentBytes: Uint8Array;
+      try {
+        currentBytes = intent.transaction.serialize({ requireAllSignatures: false, verifySignatures: false });
+      } catch {
+        currentBytes = intent.transaction.serialize();
+      }
+
+      const snapshotBytes = new Uint8Array(snapshot);
+      if (currentBytes.length !== snapshotBytes.length ||
+          !currentBytes.every((byte, i) => byte === snapshotBytes[i])) {
+        this.log('error', `Transaction mutation detected for intent ${intentId}! Blocking execution.`);
+        this.intentQueue.updateIntentStatus(intentId, 'rejected');
+        return {
+          success: false,
+          intentId,
+          status: 'rejected',
+          error: 'Transaction was mutated after approval — execution blocked',
+          securityReport: intent.securityReport,
+        };
+      }
     }
 
     try {
@@ -323,10 +411,17 @@ export class SecurityOrchestrator {
 
   /**
    * Confirm a transaction that requires human approval
+   * @param walletAddress - The wallet address of the confirming user (for ownership verification)
    */
-  confirmTransaction(intentId: string): boolean {
+  confirmTransaction(intentId: string, walletAddress?: string): boolean {
     const intent = this.intentQueue.getIntent(intentId);
     if (!intent || intent.status !== 'requires_confirmation') {
+      return false;
+    }
+
+    // Ownership check: if intent has an owner, confirmer must match
+    if (intent.ownerWallet && walletAddress && intent.ownerWallet !== walletAddress) {
+      this.log('error', `Unauthorized confirmation attempt for ${intentId}: wallet ${walletAddress} != owner ${intent.ownerWallet}`);
       return false;
     }
 
@@ -337,10 +432,17 @@ export class SecurityOrchestrator {
 
   /**
    * Reject a transaction that requires human approval
+   * @param walletAddress - The wallet address of the rejecting user (for ownership verification)
    */
-  rejectTransaction(intentId: string, reason?: string): boolean {
+  rejectTransaction(intentId: string, reason?: string, walletAddress?: string): boolean {
     const intent = this.intentQueue.getIntent(intentId);
     if (!intent) {
+      return false;
+    }
+
+    // Ownership check: if intent has an owner, rejector must match
+    if (intent.ownerWallet && walletAddress && intent.ownerWallet !== walletAddress) {
+      this.log('error', `Unauthorized rejection attempt for ${intentId}: wallet ${walletAddress} != owner ${intent.ownerWallet}`);
       return false;
     }
 

@@ -40,6 +40,7 @@ export type IntentStatus =
 export interface TransactionIntent {
   id: string;
   agentId: string;
+  ownerWallet?: string; // Wallet public key that owns this intent
   description: string;
   program: string;
   method: string;
@@ -56,6 +57,8 @@ export interface TransactionIntent {
     skillName?: string;
     skillSource?: string;
     contextHash?: string;
+    transactionSnapshot?: number[]; // Serialized bytes at approval time
+    [key: string]: unknown;
   };
 }
 

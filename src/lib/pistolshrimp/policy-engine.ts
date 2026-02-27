@@ -217,57 +217,72 @@ export class PolicyEngine {
       this.lastResetDate = today;
     }
 
-    // Decode transaction if available
+    // Decode transaction if available — validate ALL instructions
+    let allDecodedInstructions: DecodedInstruction[] = [];
     if (intent.transaction) {
-      const decoded = decodeTransaction(intent.transaction);
-      if (decoded.length > 0) {
-        decodedInstruction = decoded[0]; // Primary instruction
-        
-        // Check for description mismatch
-        descriptionMismatch = this.checkDescriptionMismatch(intent.description, decodedInstruction);
-        if (descriptionMismatch) {
-          violations.push({
-            rule: 'description_mismatch',
-            severity: 'critical',
-            message: `Transaction description doesn't match decoded instruction: "${intent.description}" vs actual method "${decodedInstruction.method}"`,
-            value: intent.description,
-            threshold: decodedInstruction.method,
-          });
+      allDecodedInstructions = decodeTransaction(intent.transaction);
+      if (allDecodedInstructions.length > 0) {
+        decodedInstruction = allDecodedInstructions[0]; // Primary instruction for reporting
+
+        // Check ALL instructions for description mismatch
+        for (const decoded of allDecodedInstructions) {
+          const mismatch = this.checkDescriptionMismatch(intent.description, decoded);
+          if (mismatch) {
+            descriptionMismatch = true;
+            violations.push({
+              rule: 'description_mismatch',
+              severity: 'critical',
+              message: `Transaction description doesn't match decoded instruction: "${intent.description}" vs actual method "${decoded.method}" (program: ${decoded.programName || decoded.programId})`,
+              value: intent.description,
+              threshold: decoded.method,
+            });
+          }
         }
       }
     }
 
-    // 1. Check if program is blocked
-    if (this.config.blockedAddresses.includes(intent.program)) {
-      violations.push({
-        rule: 'blocked_program',
-        severity: 'critical',
-        message: `Program ${intent.program} is on blocklist`,
-        value: intent.program,
-      });
-    }
+    // 1. Check if ANY program in the transaction is blocked
+    const allPrograms = allDecodedInstructions.length > 0
+      ? allDecodedInstructions.map(ix => ix.programId)
+      : [intent.program];
 
-    // 2. Check if program is allowed
-    const isAllowedProgram = this.config.allowedPrograms.includes(intent.program);
-    const programInfo = KNOWN_PROGRAMS[intent.program];
-
-    if (!isAllowedProgram) {
-      if (this.config.blockUnknownPrograms) {
+    for (const program of allPrograms) {
+      if (this.config.blockedAddresses.includes(program)) {
         violations.push({
-          rule: 'unknown_program',
-          severity: 'high',
-          message: `Program ${intent.program} is not on allowlist`,
-          value: intent.program,
+          rule: 'blocked_program',
+          severity: 'critical',
+          message: `Program ${program} is on blocklist`,
+          value: program,
         });
-      } else if (this.config.requireConfirmationForNewPrograms) {
-        requiresConfirmation = true;
-        this.log('info', `New program requires confirmation: ${intent.program}`);
       }
     }
 
-    // 3. Check transaction amount limits
-    const amount = intent.amount || decodedInstruction?.transferAmount || 0;
-    
+    // 2. Check if ALL programs are allowed
+    for (const program of allPrograms) {
+      const isAllowedProgram = this.config.allowedPrograms.includes(program);
+      const programInfo = KNOWN_PROGRAMS[program];
+
+      if (!isAllowedProgram) {
+        if (this.config.blockUnknownPrograms) {
+          violations.push({
+            rule: 'unknown_program',
+            severity: 'high',
+            message: `Program ${program} is not on allowlist`,
+            value: program,
+          });
+        } else if (this.config.requireConfirmationForNewPrograms) {
+          requiresConfirmation = true;
+          this.log('info', `New program requires confirmation: ${program}`);
+        }
+      }
+    }
+
+    // 3. Check transaction amount limits (sum across ALL instructions)
+    const totalAmount = allDecodedInstructions.reduce(
+      (sum, ix) => sum + (ix.transferAmount || 0), 0
+    ) || intent.amount || 0;
+    const amount = totalAmount;
+
     if (amount > this.config.transactionLimitSol) {
       violations.push({
         rule: 'transaction_limit_exceeded',
@@ -293,16 +308,26 @@ export class PolicyEngine {
       requiresConfirmation = true;
     }
 
-    // 5. Check for unlimited approvals (common attack vector)
-    if (decodedInstruction?.method === 'approve') {
-      const approvalAmount = decodedInstruction.params.amount as number;
-      if (approvalAmount === Number.MAX_SAFE_INTEGER || approvalAmount > 1e15) {
-        violations.push({
-          rule: 'unlimited_approval',
-          severity: 'critical',
-          message: 'Detected unlimited token approval - common attack vector',
-          value: approvalAmount,
-        });
+    // 5. Check ALL instructions for unlimited approvals (common attack vector)
+    for (const decoded of allDecodedInstructions) {
+      if (decoded.method === 'approve') {
+        const approvalAmount = decoded.params.amount as number;
+        // Check for u64::MAX and other common unlimited values
+        if (approvalAmount === Number.MAX_SAFE_INTEGER || approvalAmount > 1e15 || approvalAmount === 18446744073709551615) {
+          violations.push({
+            rule: 'unlimited_approval',
+            severity: 'critical',
+            message: `Detected unlimited token approval on program ${decoded.programName || decoded.programId} - common attack vector`,
+            value: approvalAmount,
+          });
+        }
+      }
+
+      // Also flag dangerous methods hidden in multi-instruction transactions
+      const dangerousMethods = ['set_authority', 'close_account', 'approve'];
+      if (allDecodedInstructions.length > 1 && dangerousMethods.includes(decoded.method)) {
+        requiresConfirmation = true;
+        this.log('warn', `Dangerous method "${decoded.method}" found in multi-instruction transaction`);
       }
     }
 
