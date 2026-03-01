@@ -214,6 +214,7 @@ export interface PistolShrimpConfig {
   enableGate2: boolean;
   enableGate3: boolean;
   autoExecuteBelowThreshold: boolean;
+  blockOnSimulationFailure: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 

@@ -16,9 +16,11 @@ export class SkillScanner {
   private quarantinedSkills: Set<string> = new Set();
   private scanCache: Map<string, SkillScanResult> = new Map();
   private logs: SecurityLogEntry[] = [];
+  private readonly allowManualRelease: boolean;
 
-  constructor(customThreatIntel?: Partial<ThreatIntelligence>) {
+  constructor(customThreatIntel?: Partial<ThreatIntelligence>, options?: { allowManualRelease?: boolean }) {
     this.threatIntel = { ...DEFAULT_THREAT_INTEL, ...customThreatIntel };
+    this.allowManualRelease = options?.allowManualRelease ?? false;
   }
 
   // Main scanning function
@@ -41,19 +43,23 @@ export class SkillScanner {
     // Normalize content to defeat unicode evasion
     const normalizedContent = content.normalize('NFKC');
 
-    // Cap scan length to prevent ReDoS
+    // Cap scan length to prevent ReDoS — scan head + tail to catch payloads hidden after cutoff
     const MAX_SCAN_LENGTH = 100_000;
-    const scanContent = normalizedContent.length > MAX_SCAN_LENGTH
-      ? normalizedContent.slice(0, MAX_SCAN_LENGTH)
-      : normalizedContent;
+    const TAIL_SCAN_LENGTH = 20_000;
+    let scanContent: string;
+    let tailContent: string | null = null;
 
     if (normalizedContent.length > MAX_SCAN_LENGTH) {
+      scanContent = normalizedContent.slice(0, MAX_SCAN_LENGTH);
+      tailContent = normalizedContent.slice(-TAIL_SCAN_LENGTH);
       threats.push({
         type: 'obfuscated_code',
         severity: 'medium',
         description: `Skill content unusually large (${normalizedContent.length} chars) — may contain hidden payload`,
         indicator: `length: ${normalizedContent.length}`,
       });
+    } else {
+      scanContent = normalizedContent;
     }
 
     // Check known malicious authors
@@ -100,6 +106,17 @@ export class SkillScanner {
 
     const mcpThreats = this.scanForUnauthorizedMCP(scanContent);
     threats.push(...mcpThreats);
+
+    // Scan tail of oversized content to catch payloads hidden after the head cutoff
+    if (tailContent) {
+      threats.push(...this.scanForMalwareSignatures(tailContent));
+      threats.push(...this.scanForC2Infrastructure(tailContent));
+      threats.push(...this.scanForCredentialTheft(tailContent));
+      threats.push(...this.scanForReverseShells(tailContent));
+      threats.push(...this.scanForEmbeddedInjection(tailContent));
+      threats.push(...this.scanForObfuscation(tailContent));
+      threats.push(...this.scanForUnauthorizedMCP(tailContent));
+    }
 
     // Calculate risk score
     const riskScore = this.calculateRiskScore(threats);
@@ -421,9 +438,17 @@ export class SkillScanner {
     return this.quarantinedSkills.has(skillId);
   }
 
-  // Release from quarantine (manual override)
+  // Release from quarantine (manual override) — requires explicit opt-in via allowManualRelease
   releaseFromQuarantine(skillId: string): boolean {
-    return this.quarantinedSkills.delete(skillId);
+    if (!this.allowManualRelease) {
+      this.log('error', `Blocked attempt to release quarantined skill "${skillId}" — allowManualRelease is disabled`);
+      return false;
+    }
+    const released = this.quarantinedSkills.delete(skillId);
+    if (released) {
+      this.log('error', `CRITICAL: Skill "${skillId}" manually released from quarantine`, { skillId });
+    }
+    return released;
   }
 
   // Get quarantined skills

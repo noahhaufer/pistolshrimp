@@ -115,8 +115,10 @@ export function decodeTransaction(
           }
         }
 
-        // Decode Token Program approve: extract raw amount bytes for u64::MAX detection
-        if (programId === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' && ix.data[0] === 4 && ix.data.length >= 9) {
+        // Decode Token Program / Token-2022 approve: extract raw amount bytes for u64::MAX detection
+        const isTokenProgram = programId === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+          || programId === 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+        if (isTokenProgram && ix.data[0] === 4 && ix.data.length >= 9) {
           const amountBytes = ix.data.slice(1, 9);
           decoded.params._rawAmountBytes = new Uint8Array(amountBytes);
           // Best-effort numeric decode (loses precision for u64::MAX)
@@ -137,19 +139,45 @@ export function decodeTransaction(
       for (const ix of message.compiledInstructions) {
         const programId = staticKeys[ix.programIdIndex].toBase58();
         const programInfo = KNOWN_PROGRAMS[programId];
+        const data = Buffer.from(ix.data);
 
-        instructions.push({
+        const decoded: DecodedInstruction = {
           programId,
           programName: programInfo?.name,
-          method: decodeMethodFromInstruction(programId, Buffer.from(ix.data)),
+          method: decodeMethodFromInstruction(programId, data),
           params: {},
           accounts: ix.accountKeyIndexes.map((keyIdx, idx) => ({
             name: `account_${idx}`,
             pubkey: staticKeys[keyIdx].toBase58(),
-            isSigner: false, // Would need more context
-            isWritable: false,
+            isSigner: typeof message.isAccountSigner === 'function' ? message.isAccountSigner(keyIdx) : false,
+            isWritable: typeof message.isAccountWritable === 'function' ? message.isAccountWritable(keyIdx) : false,
           })),
-        });
+        };
+
+        // Decode transfer amount for System Program
+        if (programId === SystemProgram.programId.toBase58() && data.length >= 12) {
+          const instructionType = data.readUInt32LE(0);
+          if (instructionType === 2) {
+            const lamports = data.readBigUInt64LE(4);
+            decoded.transferAmount = Number(lamports) / 1e9;
+            decoded.method = 'transfer';
+          }
+        }
+
+        // Decode Token Program / Token-2022 approve
+        const isTokenProgram = programId === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+          || programId === 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+        if (isTokenProgram && data[0] === 4 && data.length >= 9) {
+          const amountBytes = data.slice(1, 9);
+          decoded.params._rawAmountBytes = new Uint8Array(amountBytes);
+          try {
+            decoded.params.amount = Number(data.readBigUInt64LE(1));
+          } catch {
+            decoded.params.amount = Infinity;
+          }
+        }
+
+        instructions.push(decoded);
       }
     }
   } catch (error) {
@@ -180,8 +208,9 @@ function decodeMethodFromInstruction(programId: string, data: Buffer): string {
     }
   }
 
-  // Token Program discriminator (first byte)
-  if (programId === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') {
+  // Token Program / Token-2022 discriminator (first byte, same layout)
+  if (programId === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+    || programId === 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb') {
     const type = data[0];
     switch (type) {
       case 0: return 'initialize_mint';
@@ -210,6 +239,12 @@ const STORAGE_KEY_TX_HISTORY = 'pistolshrimp_tx_history';
 
 export class PolicyEngine {
   private config: PolicyConfig;
+  // Maximum bounds frozen at construction — updateConfig can never exceed these
+  private readonly maxBounds: {
+    dailyLimitSol: number;
+    transactionLimitSol: number;
+    autoSignThresholdSol: number;
+  };
   // Per-wallet daily spend tracking (keyed by wallet address, '_global' as fallback)
   private walletDailySpend: Map<string, number> = new Map();
   private lastResetDate: string = new Date().toDateString();
@@ -218,6 +253,12 @@ export class PolicyEngine {
 
   constructor(config: Partial<PolicyConfig> = {}) {
     this.config = { ...DEFAULT_POLICY_CONFIG, ...config };
+    // Freeze the initial limits as hard ceilings — runtime updates cannot exceed them
+    this.maxBounds = Object.freeze({
+      dailyLimitSol: this.config.dailyLimitSol,
+      transactionLimitSol: this.config.transactionLimitSol,
+      autoSignThresholdSol: this.config.autoSignThresholdSol,
+    });
     this.restorePersistedState();
   }
 
@@ -366,7 +407,7 @@ export class PolicyEngine {
     if (amount > this.config.transactionLimitSol) {
       violations.push({
         rule: 'transaction_limit_exceeded',
-        severity: 'high',
+        severity: 'critical',
         message: `Transaction amount ${amount} SOL exceeds limit of ${this.config.transactionLimitSol} SOL`,
         value: amount,
         threshold: this.config.transactionLimitSol,
@@ -376,7 +417,7 @@ export class PolicyEngine {
     if (dailySpend + amount > this.config.dailyLimitSol) {
       violations.push({
         rule: 'daily_limit_exceeded',
-        severity: 'high',
+        severity: 'critical',
         message: `Transaction would exceed daily limit. Current: ${dailySpend.toFixed(4)} SOL, Transaction: ${amount} SOL, Limit: ${this.config.dailyLimitSol} SOL`,
         value: dailySpend + amount,
         threshold: this.config.dailyLimitSol,
@@ -451,7 +492,7 @@ export class PolicyEngine {
 
     return {
       passed,
-      requiresConfirmation: passed && requiresConfirmation,
+      requiresConfirmation,
       violations,
       decodedInstruction,
       descriptionMismatch,
@@ -522,7 +563,14 @@ export class PolicyEngine {
       recentTx.reduce((sum, t) => sum + Math.pow(t.amount - avgAmount, 2), 0) / recentTx.length
     );
 
-    // Check if amount is anomalous (>3 standard deviations)
+    // Check if amount is anomalous (>3 standard deviations, or large deviation when all history is identical)
+    if (stdDev === 0 && amount !== avgAmount && Math.abs(amount - avgAmount) > avgAmount * 10) {
+      return {
+        isAnomaly: true,
+        score: Math.min(1, Math.abs(amount - avgAmount) / (avgAmount || 1) / 100),
+        reason: `Unusual transaction amount: ${amount} SOL (all recent tx were ${avgAmount.toFixed(4)} SOL)`,
+      };
+    }
     if (stdDev > 0 && Math.abs(amount - avgAmount) > 3 * stdDev) {
       return {
         isAnomaly: true,
@@ -579,9 +627,13 @@ export class PolicyEngine {
     return Math.max(0, this.config.dailyLimitSol - this.getDailySpend(walletAddress));
   }
 
-  // Update config
+  // Update config — spending limits are clamped to construction-time maximums
   updateConfig(updates: Partial<PolicyConfig>): void {
     this.config = { ...this.config, ...updates };
+    // Clamp spending limits to frozen maximums so runtime updates can never exceed initial bounds
+    this.config.dailyLimitSol = Math.min(this.config.dailyLimitSol, this.maxBounds.dailyLimitSol);
+    this.config.transactionLimitSol = Math.min(this.config.transactionLimitSol, this.maxBounds.transactionLimitSol);
+    this.config.autoSignThresholdSol = Math.min(this.config.autoSignThresholdSol, this.maxBounds.autoSignThresholdSol);
   }
 
   // Get current config

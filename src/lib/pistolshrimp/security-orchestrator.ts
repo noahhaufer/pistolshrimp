@@ -39,10 +39,10 @@ export class SecurityOrchestrator {
   constructor(config?: Partial<PistolShrimpConfig>) {
     this.config = createConfig(config);
     this.gateFlags = Object.freeze({
-      gate1: this.gateFlags.gate1,
-      gate2: this.gateFlags.gate2,
-      gate3: this.gateFlags.gate3,
-      autoExecute: this.gateFlags.autoExecute,
+      gate1: this.config.enableGate1,
+      gate2: this.config.enableGate2,
+      gate3: this.config.enableGate3,
+      autoExecute: this.config.autoExecuteBelowThreshold,
     });
     this.intentQueue = getIntentQueue(this.config.intentQueue);
     this.policyEngine = getPolicyEngine(this.config.policy);
@@ -109,23 +109,24 @@ export class SecurityOrchestrator {
       }
     }
 
-    // GATE 2: Prompt Firewall (if context provided)
-    if (this.gateFlags.gate2 && options?.promptContext) {
-      const promptResult = this.promptFirewall.scanInput(
-        options.promptContext,
+    // GATE 2: Prompt Firewall — scan both description and prompt context
+    if (this.gateFlags.gate2) {
+      // Always scan the description — it's shown in the confirmation UI and is an injection vector
+      const descResult = this.promptFirewall.scanInput(
+        description,
         agentId,
         undefined,
-        { source: 'transaction_context' }
+        { source: 'transaction_description' }
       );
 
-      if (!promptResult.passed) {
+      if (!descResult.passed) {
         const report = this.createSecurityReport('gate2_blocked', [
           {
             gate: 2,
             name: 'Prompt Firewall',
             status: 'fail',
-            message: `Prompt injection detected: ${promptResult.injectionAttempts.length} attempts`,
-            details: { injections: promptResult.injectionAttempts },
+            message: `Injection detected in transaction description: ${descResult.injectionAttempts.length} attempts`,
+            details: { injections: descResult.injectionAttempts },
             timestamp: Date.now(),
           },
         ]);
@@ -134,9 +135,40 @@ export class SecurityOrchestrator {
           success: false,
           intentId: 'blocked_gate2',
           status: 'rejected',
-          error: 'Transaction blocked by prompt firewall',
+          error: 'Transaction blocked by prompt firewall (description injection)',
           securityReport: report,
         };
+      }
+
+      // Also scan prompt context if provided
+      if (options?.promptContext) {
+        const promptResult = this.promptFirewall.scanInput(
+          options.promptContext,
+          agentId,
+          undefined,
+          { source: 'transaction_context' }
+        );
+
+        if (!promptResult.passed) {
+          const report = this.createSecurityReport('gate2_blocked', [
+            {
+              gate: 2,
+              name: 'Prompt Firewall',
+              status: 'fail',
+              message: `Prompt injection detected: ${promptResult.injectionAttempts.length} attempts`,
+              details: { injections: promptResult.injectionAttempts },
+              timestamp: Date.now(),
+            },
+          ]);
+
+          return {
+            success: false,
+            intentId: 'blocked_gate2',
+            status: 'rejected',
+            error: 'Transaction blocked by prompt firewall',
+            securityReport: report,
+          };
+        }
       }
     }
 
@@ -396,8 +428,19 @@ export class SecurityOrchestrator {
         }
         this.log('info', `Transaction simulation passed for ${intentId}`);
       } catch (simError) {
-        // Simulation network error — log but don't block (devnet can be flaky)
-        this.log('warn', `Transaction simulation unavailable for ${intentId}: ${simError instanceof Error ? simError.message : 'unknown'}`)
+        const simMsg = simError instanceof Error ? simError.message : 'unknown';
+        if (this.config.blockOnSimulationFailure) {
+          this.log('error', `Transaction simulation failed for ${intentId}, blocking: ${simMsg}`);
+          this.intentQueue.updateIntentStatus(intentId, 'rejected');
+          return {
+            success: false,
+            intentId,
+            status: 'rejected',
+            error: `Transaction simulation unavailable — blocked for safety: ${simMsg}`,
+            securityReport: intent.securityReport,
+          };
+        }
+        this.log('warn', `Transaction simulation unavailable for ${intentId} (non-blocking): ${simMsg}`);
       }
 
       // Sign transaction (ephemeral signer pattern - single use)

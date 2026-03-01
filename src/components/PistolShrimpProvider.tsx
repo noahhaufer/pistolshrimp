@@ -144,7 +144,8 @@ export function PistolShrimpProvider({
 
   // Confirm an intent
   const confirmIntent = useCallback(async (intentId: string): Promise<SecureTransactionResult> => {
-    const confirmed = orchestrator.confirmTransaction(intentId);
+    const walletAddress = wallet.publicKey?.toBase58();
+    const confirmed = orchestrator.confirmTransaction(intentId, walletAddress);
     if (!confirmed) {
       return {
         success: false,
@@ -164,11 +165,12 @@ export function PistolShrimpProvider({
 
   // Reject an intent
   const rejectIntent = useCallback((intentId: string, reason?: string): boolean => {
-    const result = orchestrator.rejectTransaction(intentId, reason);
+    const walletAddress = wallet.publicKey?.toBase58();
+    const result = orchestrator.rejectTransaction(intentId, reason, walletAddress);
     setState(orchestrator.getState());
     setIntentForConfirmation(null);
     return result;
-  }, [orchestrator]);
+  }, [orchestrator, wallet]);
 
   // Execute an approved intent
   const executeIntent = useCallback(async (intentId: string): Promise<SecureTransactionResult> => {

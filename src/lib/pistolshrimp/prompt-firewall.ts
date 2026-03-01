@@ -116,8 +116,12 @@ export class PromptFirewall {
     // Normalize to catch unicode evasion — patterns run against normalized text
     const normalizedInput = this.normalizeInput(input);
 
-    // Cap input length to prevent ReDoS on crafted long strings
+    // Cap input length to prevent ReDoS — scan head + tail to catch hidden payloads
     const MAX_SCAN_LENGTH = 50_000;
+    const TAIL_SCAN_LENGTH = 10_000;
+    let tailInput: string | null = null;
+    let tailOriginal: string | null = null;
+
     if (normalizedInput.length > MAX_SCAN_LENGTH) {
       injectionAttempts.push({
         type: 'encoding_attack',
@@ -126,7 +130,8 @@ export class PromptFirewall {
         location: `input_length: ${normalizedInput.length}`,
         blocked: true,
       });
-      // Still scan, but truncated
+      tailInput = normalizedInput.slice(-TAIL_SCAN_LENGTH);
+      tailOriginal = input.slice(-TAIL_SCAN_LENGTH);
     }
     const scanInput = normalizedInput.length > MAX_SCAN_LENGTH
       ? normalizedInput.slice(0, MAX_SCAN_LENGTH)
@@ -173,6 +178,15 @@ export class PromptFirewall {
     // Scan for context boundary violations
     const boundaryInjections = this.scanForBoundaryViolations(scanInput, metadata);
     injectionAttempts.push(...boundaryInjections);
+
+    // Scan tail of oversized input to catch payloads hidden after the head cutoff
+    if (tailInput) {
+      injectionAttempts.push(...this.scanForInjectionPatterns(tailInput));
+      injectionAttempts.push(...this.scanForBoundaryViolations(tailInput, metadata));
+    }
+    if (tailOriginal) {
+      injectionAttempts.push(...this.scanForEncodingAttacks(tailOriginal));
+    }
 
     // Check for context isolation violations
     const contextIsolationViolation = this.checkContextIsolation(session, scanInput);
@@ -404,18 +418,20 @@ export class PromptFirewall {
     const hasFileAccess = /read\s+file|access\s+file|open\s+file/gi.test(input);
     const hasNetworkAccess = /fetch|http|request|curl|wget/gi.test(input);
     const hasWalletAccess = /sign|transfer|send|wallet/gi.test(input);
+    const hasSystemAccess = /execute|run\s+command|shell|sudo|chmod|chown/gi.test(input);
 
     const newPaths: string[] = [];
     if (hasFileAccess) newPaths.push('file');
     if (hasNetworkAccess) newPaths.push('network');
     if (hasWalletAccess) newPaths.push('wallet');
+    if (hasSystemAccess) newPaths.push('system');
 
     // Check if accessing new paths suddenly
     let driftDetected = false;
     for (const path of newPaths) {
       if (!session.accessedPaths.has(path)) {
-        if (session.accessedPaths.size > 2) {
-          // Session has established patterns but now accessing new area
+        if (session.accessedPaths.size >= 2) {
+          // Session has established patterns (2+) but now accessing new area
           driftDetected = true;
         }
         session.accessedPaths.add(path);

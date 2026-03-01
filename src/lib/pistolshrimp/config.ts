@@ -49,6 +49,7 @@ export const DEFAULT_PISTOL_SHRIMP_CONFIG: PistolShrimpConfig = {
   enableGate2: true,
   enableGate3: true,
   autoExecuteBelowThreshold: true,
+  blockOnSimulationFailure: true,
   logLevel: 'info',
 };
 

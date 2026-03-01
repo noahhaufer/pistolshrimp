@@ -311,7 +311,8 @@ src/
 │   ├── prompt-firewall.ts       # Gate 2 — Injection detection
 │   ├── policy-engine.ts         # Gate 3 — Transaction validation
 │   ├── intent-queue.ts          # Rate-limited intent queue
-│   └── security-orchestrator.ts # Main entry point
+│   ├── security-orchestrator.ts # Main entry point
+│   └── __tests__/               # Unit + integration tests
 ├── components/
 │   ├── PistolShrimpProvider.tsx  # React context + hooks
 │   ├── SecurityMonitor.tsx      # Real-time security dashboard
@@ -321,6 +322,19 @@ src/
 │   └── Index.tsx                # Interactive demo
 └── App.tsx                      # Router + wallet adapter setup
 ```
+
+## Testing
+
+```bash
+# Unit tests (165 tests, no network, ~600ms)
+npm test
+
+# Integration tests (19 tests, hits Solana devnet, ~5s)
+# Requires .env with DEVNET_PRIVATE_KEY and DEVNET_PUBLIC_KEY
+npm run test:integration
+```
+
+Unit tests cover all five SDK modules (skill scanner, prompt firewall, policy engine, intent queue, orchestrator). Integration tests verify transaction decoding, simulation, policy enforcement, mutation detection, and signing round-trips against a real devnet RPC node.
 
 ## Tech Stack
 
