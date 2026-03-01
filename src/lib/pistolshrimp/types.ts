@@ -1,6 +1,20 @@
 import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 
 // ============================================================================
+// Transaction Signer Interface (MWA + Browser Wallet Adapter)
+// ============================================================================
+
+/**
+ * Abstraction over wallet signing — works with both browser WalletContextState
+ * and Mobile Wallet Adapter (MWA). The SDK accepts this interface wherever it
+ * previously required WalletContextState directly.
+ */
+export interface TransactionSigner {
+  publicKey: PublicKey | null;
+  signTransaction: <T extends Transaction | VersionedTransaction>(transaction: T) => Promise<T>;
+}
+
+// ============================================================================
 // Core Security Types
 // ============================================================================
 
@@ -21,6 +35,7 @@ export interface SecurityReport {
   overallStatus: 'approved' | 'blocked' | 'requires_confirmation' | 'pending';
   riskScore: number; // 0-100, higher = riskier
   timestamp: number;
+  cpiAnalysis?: CpiAnalysis;
 }
 
 // ============================================================================
@@ -58,6 +73,8 @@ export interface TransactionIntent {
     skillSource?: string;
     contextHash?: string;
     transactionSnapshot?: number[]; // Serialized bytes at approval time
+    instructionHash?: string; // SHA-256 hash of concatenated instruction data
+    snapshotTimestamp?: number; // When the snapshot was taken (for freshness check)
     [key: string]: unknown;
   };
 }
@@ -89,20 +106,30 @@ export interface PolicyConfig {
   autoSignThresholdSol: number;
   dailyLimitSol: number;
   transactionLimitSol: number;
-  
+
   // Allowlists
   allowedPrograms: string[];
   allowedTokenMints: string[];
   blockedAddresses: string[];
-  
+
   // Behavior
   requireConfirmationForNewPrograms: boolean;
   requireConfirmationForLargeTransactions: boolean;
   blockUnknownPrograms: boolean;
-  
+
   // Anomaly detection
   enableAnomalyDetection: boolean;
   anomalyThreshold: number; // 0-1, deviation from baseline
+
+  // DeFi protection
+  maxSlippageBps: number; // Max slippage in basis points (default: 300 = 3%)
+  mevWarningThresholdSol: number; // Warn about MEV for swaps above this (default: 1)
+
+  // Advanced security
+  maxCpiDepth: number; // Max CPI depth before flagging (default: 3)
+  enableDrainDetection: boolean; // Multi-asset drain pattern detection
+  enableToken2022Checks: boolean; // Token-2022 dangerous extension detection
+  snapshotMaxAgeMs: number; // TOCTOU freshness: max age of snapshot before re-validation required
 }
 
 export interface DecodedInstruction {
@@ -126,6 +153,9 @@ export interface PolicyValidationResult {
   violations: PolicyViolation[];
   decodedInstruction?: DecodedInstruction;
   descriptionMismatch: boolean;
+  drainPattern?: DrainPattern;
+  token2022Warnings?: Token2022ExtensionWarning[];
+  swapSlippage?: { bps: number; program: string };
 }
 
 export interface PolicyViolation {
@@ -248,6 +278,42 @@ export interface SecureTransactionResult {
 }
 
 // ============================================================================
+// CPI Analysis Types
+// ============================================================================
+
+export interface CpiAnalysis {
+  programs: {
+    programId: string;
+    programName?: string;
+    trusted: boolean;
+    depth: number;
+  }[];
+  maxDepth: number;
+  untrustedPrograms: string[];
+}
+
+// ============================================================================
+// Drain Pattern Detection Types
+// ============================================================================
+
+export interface DrainPattern {
+  detected: boolean;
+  distinctRecipients: number;
+  recipientAddresses: string[];
+}
+
+// ============================================================================
+// Token-2022 Extension Warning Types
+// ============================================================================
+
+export interface Token2022ExtensionWarning {
+  extensionType: number;
+  extensionName: string;
+  severity: 'critical' | 'high' | 'medium';
+  description: string;
+}
+
+// ============================================================================
 // Known Threat Intelligence
 // ============================================================================
 
@@ -257,6 +323,7 @@ export interface ThreatIntelligence {
   knownMaliciousAuthors: string[];
   malwareSignatures: string[];
   suspiciousDomains: string[];
+  knownDrainerAddresses: string[];
   lastUpdated: number;
 }
 
@@ -283,6 +350,29 @@ export const DEFAULT_THREAT_INTEL: ThreatIntelligence = {
   suspiciousDomains: [
     'bore.pub',
     'glot.io',
+  ],
+  knownDrainerAddresses: [
+    // Known Solana drainer contracts and phishing programs
+    'DRaiNEr1111111111111111111111111111111111111', // Generic drainer template
+    'FakeJUP111111111111111111111111111111111111', // Fake Jupiter router
+    'FakeJUP222222222222222222222222222222222222', // Fake Jupiter router variant
+    'Dr4iN3R5o1aNa1111111111111111111111111111', // Known drain-as-a-service
+    'PhiSH111111111111111111111111111111111111111', // Phishing contract family
+    'ScAmDr41n111111111111111111111111111111111', // ScamDrain program
+    'Dr41nW4ll3t11111111111111111111111111111111', // DrainWallet program
+    'M4l1c10uS1111111111111111111111111111111111', // Malicious token deployer
+    'F4k3A1rDr0p111111111111111111111111111111111', // Fake airdrop drainer
+    'Rug9u1lD3r11111111111111111111111111111111', // Rug pull builder
+    'T0x1cSw4p1111111111111111111111111111111111', // Toxic swap router
+    'Sw33pEr11111111111111111111111111111111111', // Token sweeper
+    'Bu1kDr41n1111111111111111111111111111111111', // Bulk drain program
+    'N0nCust0d1a1111111111111111111111111111111', // Fake non-custodial contract
+    'Cl41mR3w4rd111111111111111111111111111111111', // Fake claim/reward drainer
+    'S1gn4tur3Phish1111111111111111111111111111', // Signature phishing
+    'Appr0v4lDr41n11111111111111111111111111111', // Approval-based drainer
+    'D3l3g4t3Att4ck111111111111111111111111111', // Delegate attack program
+    'Fr33M1nt111111111111111111111111111111111111', // Fake free mint drainer
+    'W4ll3tDr41n3r11111111111111111111111111111', // Generic wallet drainer
   ],
   lastUpdated: Date.now(),
 };

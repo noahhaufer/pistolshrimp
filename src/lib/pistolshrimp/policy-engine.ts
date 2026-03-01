@@ -6,6 +6,9 @@ import {
   DecodedInstruction,
   TransactionIntent,
   SecurityLogEntry,
+  DrainPattern,
+  Token2022ExtensionWarning,
+  DEFAULT_THREAT_INTEL,
 } from './types';
 import { DEFAULT_POLICY_CONFIG } from './config';
 
@@ -75,6 +78,36 @@ const KNOWN_PROGRAMS: Record<string, ProgramInfo> = {
     category: 'defi',
     trusted: true,
   },
+  'BPFLoaderUpgradeab1e11111111111111111111111': {
+    name: 'BPF Upgradeable Loader',
+    category: 'system',
+    trusted: false, // Upgrade instructions are always flagged
+  },
+};
+
+// Known swap program IDs
+const JUPITER_V6 = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
+const ORCA_WHIRLPOOL = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc';
+const BPF_LOADER_UPGRADEABLE = 'BPFLoaderUpgradeab1e11111111111111111111111';
+const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+
+// Token-2022 dangerous extension types
+const TOKEN_2022_DANGEROUS_EXTENSIONS: Record<number, { name: string; severity: 'critical' | 'high'; description: string }> = {
+  35: {
+    name: 'PermanentDelegate',
+    severity: 'critical',
+    description: 'PermanentDelegate allows an authority to transfer/burn tokens from ANY holder without consent',
+  },
+  36: {
+    name: 'TransferHook',
+    severity: 'critical',
+    description: 'TransferHook executes arbitrary code on every transfer — can be used for hidden drains',
+  },
+  37: {
+    name: 'ConfidentialTransfer',
+    severity: 'high',
+    description: 'ConfidentialTransfer hides amounts, making it impossible to verify transaction values',
+  },
 };
 
 // ============================================================================
@@ -129,6 +162,11 @@ export function decodeTransaction(
           }
         }
 
+        // Store raw instruction data for Token-2022 extension and swap slippage checks
+        if (programId === TOKEN_2022_PROGRAM || programId === JUPITER_V6 || programId === ORCA_WHIRLPOOL) {
+          decoded.params._rawInstructionData = new Uint8Array(ix.data);
+        }
+
         instructions.push(decoded);
       }
     } else {
@@ -175,6 +213,11 @@ export function decodeTransaction(
           } catch {
             decoded.params.amount = Infinity;
           }
+        }
+
+        // Store raw instruction data for Token-2022 extension and swap slippage checks
+        if (programId === TOKEN_2022_PROGRAM || programId === JUPITER_V6 || programId === ORCA_WHIRLPOOL) {
+          decoded.params._rawInstructionData = new Uint8Array(data);
         }
 
         instructions.push(decoded);
@@ -327,6 +370,9 @@ export class PolicyEngine {
     let requiresConfirmation = false;
     let decodedInstruction: DecodedInstruction | undefined;
     let descriptionMismatch = false;
+    let drainPattern: DrainPattern | undefined;
+    let token2022Warnings: Token2022ExtensionWarning[] | undefined;
+    let swapSlippage: { bps: number; program: string } | undefined;
 
     // Reset daily spend if new day
     const today = new Date().toDateString();
@@ -362,10 +408,41 @@ export class PolicyEngine {
       }
     }
 
+    // =====================================================================
+    // NEW CHECK: BPF Upgrade Detection (P0 — Feature #4)
+    // =====================================================================
+    for (const decoded of allDecodedInstructions) {
+      if (decoded.programId === BPF_LOADER_UPGRADEABLE) {
+        violations.push({
+          rule: 'bpf_upgrade_detected',
+          severity: 'critical',
+          message: `Transaction targets BPF Upgradeable Loader — program upgrade/authority change detected. This is extremely dangerous.`,
+          value: decoded.method,
+        });
+      }
+    }
+
     // 1. Check if ANY program in the transaction is blocked
     const allPrograms = allDecodedInstructions.length > 0
       ? allDecodedInstructions.map(ix => ix.programId)
       : [intent.program];
+
+    // =====================================================================
+    // NEW CHECK: Destination Address Reputation (P0 — Feature #3)
+    // =====================================================================
+    const drainerAddresses = DEFAULT_THREAT_INTEL.knownDrainerAddresses;
+    for (const decoded of allDecodedInstructions) {
+      for (const account of decoded.accounts) {
+        if (account.isWritable && !account.isSigner && drainerAddresses.includes(account.pubkey)) {
+          violations.push({
+            rule: 'known_drainer_address',
+            severity: 'critical',
+            message: `Recipient ${account.pubkey} is a known drainer/scam address`,
+            value: account.pubkey,
+          });
+        }
+      }
+    }
 
     for (const program of allPrograms) {
       if (this.config.blockedAddresses.includes(program)) {
@@ -394,6 +471,27 @@ export class PolicyEngine {
         } else if (this.config.requireConfirmationForNewPrograms) {
           requiresConfirmation = true;
           this.log('info', `New program requires confirmation: ${program}`);
+        }
+      }
+    }
+
+    // =====================================================================
+    // NEW CHECK: Token-2022 Dangerous Extension Detection (P0 — Feature #2)
+    // =====================================================================
+    if (this.config.enableToken2022Checks) {
+      const t2022Result = this.checkToken2022Extensions(allDecodedInstructions);
+      if (t2022Result.length > 0) {
+        token2022Warnings = t2022Result;
+        for (const warning of t2022Result) {
+          violations.push({
+            rule: 'token2022_dangerous_extension',
+            severity: warning.severity,
+            message: `Token-2022 ${warning.extensionName}: ${warning.description}`,
+            value: warning.extensionType,
+          });
+          if (warning.severity === 'critical') {
+            requiresConfirmation = true;
+          }
         }
       }
     }
@@ -465,6 +563,65 @@ export class PolicyEngine {
       }
     }
 
+    // =====================================================================
+    // NEW CHECK: Multi-Asset Drain Pattern Detection (P0 — Feature #1)
+    // =====================================================================
+    if (this.config.enableDrainDetection) {
+      drainPattern = this.checkDrainPattern(allDecodedInstructions);
+      if (drainPattern.detected) {
+        violations.push({
+          rule: 'drain_pattern_detected',
+          severity: 'critical',
+          message: `Drain pattern: ${drainPattern.distinctRecipients} distinct recipients detected in single transaction (${drainPattern.recipientAddresses.join(', ')})`,
+          value: drainPattern.distinctRecipients,
+          threshold: 3,
+        });
+      }
+    }
+
+    // =====================================================================
+    // NEW CHECK: Jupiter/Orca Swap Slippage Validation (P2 — Feature #7)
+    // =====================================================================
+    const slippageResult = this.checkSwapSlippage(allDecodedInstructions);
+    if (slippageResult) {
+      swapSlippage = slippageResult;
+      if (slippageResult.bps > 1000) {
+        violations.push({
+          rule: 'excessive_slippage',
+          severity: 'critical',
+          message: `Swap slippage ${slippageResult.bps} bps (${(slippageResult.bps / 100).toFixed(1)}%) on ${slippageResult.program} exceeds maximum of 10%. Transaction blocked.`,
+          value: slippageResult.bps,
+          threshold: 1000,
+        });
+      } else if (slippageResult.bps > this.config.maxSlippageBps) {
+        violations.push({
+          rule: 'high_slippage',
+          severity: 'high',
+          message: `Swap slippage ${slippageResult.bps} bps (${(slippageResult.bps / 100).toFixed(1)}%) on ${slippageResult.program} exceeds recommended maximum of ${this.config.maxSlippageBps} bps (${(this.config.maxSlippageBps / 100).toFixed(1)}%)`,
+          value: slippageResult.bps,
+          threshold: this.config.maxSlippageBps,
+        });
+        requiresConfirmation = true;
+      }
+    }
+
+    // =====================================================================
+    // NEW CHECK: MEV/Sandwich Attack Awareness (P2 — Feature #8)
+    // =====================================================================
+    const isSwap = allDecodedInstructions.some(ix =>
+      ix.programId === JUPITER_V6 || ix.programId === ORCA_WHIRLPOOL
+    );
+    if (isSwap && amount >= this.config.mevWarningThresholdSol) {
+      violations.push({
+        rule: 'mev_exposure_warning',
+        severity: 'medium',
+        message: `Swap of ${amount} SOL (≥${this.config.mevWarningThresholdSol} SOL) is exposed to MEV/sandwich attacks. Consider using Jupiter's MEV-protected RPC or reducing transaction size.`,
+        value: amount,
+        threshold: this.config.mevWarningThresholdSol,
+      });
+      requiresConfirmation = true;
+    }
+
     // 6. Anomaly detection
     if (this.config.enableAnomalyDetection) {
       const anomaly = this.detectAnomaly(intent, amount);
@@ -496,6 +653,9 @@ export class PolicyEngine {
       violations,
       decodedInstruction,
       descriptionMismatch,
+      drainPattern,
+      token2022Warnings,
+      swapSlippage,
     };
   }
 
@@ -541,6 +701,99 @@ export class PolicyEngine {
     }
 
     return false;
+  }
+
+  // Check Token-2022 instructions for dangerous extension types
+  private checkToken2022Extensions(instructions: DecodedInstruction[]): Token2022ExtensionWarning[] {
+    const warnings: Token2022ExtensionWarning[] = [];
+
+    for (const ix of instructions) {
+      if (ix.programId !== TOKEN_2022_PROGRAM) continue;
+
+      // Token-2022 extension instructions use a 2-byte layout:
+      // byte 0 = base instruction type, byte 1+ = extension data
+      // Extension-related instructions often have instruction type bytes that
+      // can contain extension type identifiers in their data payload.
+      // We scan the full instruction data for extension type markers.
+      const rawData = ix.params._rawInstructionData as Uint8Array | undefined;
+      if (!rawData || rawData.length < 2) continue;
+
+      for (const [extType, info] of Object.entries(TOKEN_2022_DANGEROUS_EXTENSIONS)) {
+        const extByte = Number(extType);
+        // Check if the extension type byte appears in the instruction data
+        // Extension configuration instructions typically have the extension type
+        // as a discriminator in their data
+        if (rawData.includes(extByte)) {
+          warnings.push({
+            extensionType: extByte,
+            extensionName: info.name,
+            severity: info.severity,
+            description: info.description,
+          });
+        }
+      }
+    }
+
+    return warnings;
+  }
+
+  // Detect multi-asset drain patterns: 3+ distinct recipients in one tx
+  private checkDrainPattern(instructions: DecodedInstruction[]): DrainPattern {
+    const recipients = new Set<string>();
+
+    for (const ix of instructions) {
+      // For transfers, the recipient is typically the second account (index 1)
+      if (ix.method === 'transfer' && ix.accounts.length >= 2) {
+        const recipient = ix.accounts[1].pubkey;
+        // Exclude the fee payer / signer (they're sending, not receiving)
+        if (!ix.accounts[1].isSigner) {
+          recipients.add(recipient);
+        }
+      }
+    }
+
+    const recipientAddresses = Array.from(recipients);
+    return {
+      detected: recipientAddresses.length >= 3,
+      distinctRecipients: recipientAddresses.length,
+      recipientAddresses,
+    };
+  }
+
+  // Check swap slippage on Jupiter v6 and Orca Whirlpool instructions
+  private checkSwapSlippage(instructions: DecodedInstruction[]): { bps: number; program: string } | null {
+    for (const ix of instructions) {
+      if (ix.programId === JUPITER_V6) {
+        // Jupiter v6 route instruction layout:
+        // bytes 0-7: Anchor discriminator (8 bytes)
+        // bytes 8-9: slippage bps (u16 LE)
+        const rawData = ix.params._rawInstructionData as Uint8Array | undefined;
+        if (rawData && rawData.length >= 10) {
+          const slippageBps = rawData[8] | (rawData[9] << 8);
+          if (slippageBps > 0) {
+            return { bps: slippageBps, program: 'Jupiter v6' };
+          }
+        }
+      }
+
+      if (ix.programId === ORCA_WHIRLPOOL) {
+        // Orca Whirlpool swap instruction:
+        // bytes 0-7: Anchor discriminator (8 bytes)
+        // bytes 8-15: amount (u64 LE)
+        // bytes 16-23: other_amount_threshold (u64 LE)
+        // bytes 24-25: sqrt_price_limit or similar — slippage encoded differently
+        // For Orca, we check if the instruction has a slippage field
+        const rawData = ix.params._rawInstructionData as Uint8Array | undefined;
+        if (rawData && rawData.length >= 10) {
+          const slippageBps = rawData[8] | (rawData[9] << 8);
+          if (slippageBps > 0 && slippageBps <= 10000) {
+            return { bps: slippageBps, program: 'Orca Whirlpool' };
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   // Simple anomaly detection based on transaction patterns

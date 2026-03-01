@@ -584,3 +584,108 @@ describe('realistic agent scenario', () => {
     expect(policyResult.passed).toBe(true);
   });
 });
+
+// ============================================================================
+// 8. New security feature integration tests
+//
+// Tests the 9 new security features against real Solana transaction objects
+// built with live blockhashes to verify end-to-end correctness.
+// ============================================================================
+
+describe('drain pattern detection (real tx)', () => {
+  it('flags 3+ distinct recipients in single tx', async () => {
+    const engine = new PolicyEngine();
+    const tx = new Transaction();
+    for (let i = 0; i < 4; i++) {
+      tx.add(SystemProgram.transfer({
+        fromPubkey: publicKey,
+        toPubkey: Keypair.generate().publicKey,
+        lamports: 10_000,
+      }));
+    }
+    tx.feePayer = publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+    const result = engine.validateIntent({
+      id: 'int_drain_1',
+      agentId: 'agent-1',
+      description: 'Multi-recipient transfer',
+      program: SystemProgram.programId.toBase58(),
+      method: 'transfer',
+      params: {},
+      amount: 0.00004,
+      status: 'pending',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 1800000,
+      transaction: tx,
+    });
+
+    expect(result.drainPattern).toBeDefined();
+    expect(result.drainPattern!.detected).toBe(true);
+    expect(result.drainPattern!.distinctRecipients).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('BPF upgrade detection (real tx)', () => {
+  it('blocks transaction targeting BPF Upgradeable Loader', async () => {
+    const engine = new PolicyEngine();
+    const bpfLoader = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
+    const tx = new Transaction();
+    tx.add({
+      programId: bpfLoader,
+      keys: [
+        { pubkey: publicKey, isSigner: true, isWritable: false },
+        { pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true },
+      ],
+      data: Buffer.from([3]),
+    });
+    tx.feePayer = publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+    const result = engine.validateIntent({
+      id: 'int_bpf_1',
+      agentId: 'agent-1',
+      description: 'Upgrade program',
+      program: bpfLoader.toBase58(),
+      method: 'upgrade',
+      params: {},
+      status: 'pending',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 1800000,
+      transaction: tx,
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.violations.some(v => v.rule === 'bpf_upgrade_detected')).toBe(true);
+  });
+});
+
+describe('TOCTOU freshness with real orchestrator', () => {
+  it('snapshot timestamp is set on submission', async () => {
+    const orchestrator = new SecurityOrchestrator({
+      ...DEFAULT_PISTOL_SHRIMP_CONFIG,
+      autoExecuteBelowThreshold: true,
+    });
+
+    const tx = await buildTransferTx(1000);
+    const before = Date.now();
+    const result = await orchestrator.submitTransaction(
+      'agent-1',
+      'Transfer tiny SOL for test',
+      tx,
+      {
+        program: SystemProgram.programId.toBase58(),
+        walletAddress: publicKey.toBase58(),
+      },
+    );
+    const after = Date.now();
+
+    const intent = orchestrator.getIntent(result.intentId);
+    expect(intent).toBeDefined();
+    expect(intent!.metadata?.snapshotTimestamp).toBeDefined();
+    expect(intent!.metadata!.snapshotTimestamp! >= before).toBe(true);
+    expect(intent!.metadata!.snapshotTimestamp! <= after).toBe(true);
+    expect(intent!.metadata?.instructionHash).toBeDefined();
+    expect(intent!.metadata!.instructionHash).toMatch(/^ixhash_/);
+  });
+});

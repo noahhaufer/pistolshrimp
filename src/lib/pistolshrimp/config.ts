@@ -14,7 +14,7 @@ export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
   autoSignThresholdSol: 0.1, // Auto-sign below 0.1 SOL
   dailyLimitSol: 10, // 10 SOL daily limit
   transactionLimitSol: 5, // 5 SOL per transaction max
-  
+
   // Allowlists - Common Solana programs
   allowedPrograms: [
     '11111111111111111111111111111111', // System Program
@@ -31,15 +31,25 @@ export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
     'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
   ],
   blockedAddresses: [],
-  
+
   // Behavior
   requireConfirmationForNewPrograms: true,
   requireConfirmationForLargeTransactions: true,
   blockUnknownPrograms: false,
-  
+
   // Anomaly detection
   enableAnomalyDetection: true,
   anomalyThreshold: 0.7,
+
+  // DeFi protection
+  maxSlippageBps: 300, // 3% max slippage
+  mevWarningThresholdSol: 1, // Warn for swaps above 1 SOL
+
+  // Advanced security
+  maxCpiDepth: 3,
+  enableDrainDetection: true,
+  enableToken2022Checks: true,
+  snapshotMaxAgeMs: 300_000, // 5 minutes
 };
 
 export const DEFAULT_PISTOL_SHRIMP_CONFIG: PistolShrimpConfig = {

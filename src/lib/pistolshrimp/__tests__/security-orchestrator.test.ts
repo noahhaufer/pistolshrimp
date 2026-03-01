@@ -519,4 +519,234 @@ describe('SecurityOrchestrator', () => {
       expect(logs.length).toBeGreaterThan(0);
     });
   });
+
+  // =========================================================================
+  // TOCTOU Enhancement — Instruction Hash (Feature #6)
+  // =========================================================================
+
+  describe('TOCTOU instruction hash', () => {
+    it('stores instructionHash and snapshotTimestamp in metadata', async () => {
+      const orchestrator = new SecurityOrchestrator();
+      const tx = makeTransferTx(50_000_000);
+      const result = await orchestrator.submitTransaction('agent-1', 'Transfer 0.05 SOL', tx, {
+        walletAddress: makePayer().toBase58(),
+      });
+
+      const intent = orchestrator.getIntent(result.intentId);
+      expect(intent).toBeDefined();
+      expect(intent!.metadata?.instructionHash).toBeDefined();
+      expect(intent!.metadata?.instructionHash).toMatch(/^ixhash_/);
+      expect(intent!.metadata?.snapshotTimestamp).toBeDefined();
+      expect(typeof intent!.metadata?.snapshotTimestamp).toBe('number');
+    });
+  });
+
+  // =========================================================================
+  // TOCTOU Freshness Check (Feature #6)
+  // =========================================================================
+
+  describe('TOCTOU freshness', () => {
+    it('rejects execution when snapshot is stale', async () => {
+      const orchestrator = new SecurityOrchestrator({
+        policy: {
+          ...({} as any),
+          snapshotMaxAgeMs: 1, // 1ms — will expire immediately
+        },
+      });
+      const kp = Keypair.generate();
+      const wallet = makeWalletMock(kp);
+      const connection = makeConnectionMock();
+
+      const tx = makeSignableTransferTx(50_000_000, kp);
+      const result = await orchestrator.submitTransaction('agent-1', 'Transfer 0.05 SOL', tx, {
+        amount: 0.05,
+        walletAddress: wallet.publicKey.toBase58(),
+      });
+
+      expect(result.status).toBe('approved');
+
+      // Wait a tiny bit to ensure timestamp has passed
+      await new Promise(resolve => setTimeout(resolve, 5));
+
+      const execResult = await orchestrator.executeTransaction(result.intentId, wallet as any, connection);
+      expect(execResult.status).toBe('rejected');
+      expect(execResult.error).toContain('expired');
+    });
+
+    it('allows execution when snapshot is fresh', async () => {
+      const orchestrator = new SecurityOrchestrator({
+        blockOnSimulationFailure: false,
+      });
+      const kp = Keypair.generate();
+      const wallet = makeWalletMock(kp);
+      const connection = makeConnectionMock();
+
+      const tx = makeSignableTransferTx(50_000_000, kp);
+      const result = await orchestrator.submitTransaction('agent-1', 'Transfer 0.05 SOL', tx, {
+        amount: 0.05,
+        walletAddress: wallet.publicKey.toBase58(),
+      });
+
+      expect(result.status).toBe('approved');
+
+      const execResult = await orchestrator.executeTransaction(result.intentId, wallet as any, connection);
+      expect(execResult.status).toBe('executed');
+    });
+  });
+
+  // =========================================================================
+  // CPI Analysis (Feature #5)
+  // =========================================================================
+
+  describe('CPI analysis', () => {
+    it('blocks execution when CPI invokes untrusted program', async () => {
+      const orchestrator = new SecurityOrchestrator({
+        blockOnSimulationFailure: true,
+      });
+      const kp = Keypair.generate();
+      const wallet = makeWalletMock(kp);
+
+      const untrustedProgram = makePayer();
+      const connection = {
+        simulateTransaction: vi.fn(async () => ({
+          value: {
+            err: null,
+            logs: [],
+            innerInstructions: [
+              {
+                index: 0,
+                instructions: [
+                  {
+                    programIdIndex: 2, // points to untrustedProgram
+                    accounts: [0],
+                    data: '',
+                  },
+                ],
+              },
+            ],
+          },
+          context: { slot: 1 },
+        })),
+        sendRawTransaction: vi.fn(async () => 'mock-sig'),
+        confirmTransaction: vi.fn(async () => ({ value: { err: null }, context: { slot: 1 } })),
+      } as any;
+
+      const tx = makeSignableTransferTx(50_000_000, kp);
+      // Add the untrusted program to the transaction's accounts so it can be resolved
+      tx.add(new TransactionInstruction({
+        programId: untrustedProgram,
+        keys: [{ pubkey: kp.publicKey, isSigner: true, isWritable: false }],
+        data: Buffer.from([0]),
+      }));
+
+      const result = await orchestrator.submitTransaction('agent-1', 'Transfer 0.05 SOL', tx, {
+        amount: 0.05,
+        walletAddress: wallet.publicKey.toBase58(),
+      });
+
+      // Needs confirmation (unknown program)
+      if (result.status === 'requires_confirmation') {
+        orchestrator.confirmTransaction(result.intentId, wallet.publicKey.toBase58());
+      }
+
+      const execResult = await orchestrator.executeTransaction(result.intentId, wallet as any, connection);
+      expect(execResult.status).toBe('rejected');
+      expect(execResult.error).toContain('CPI');
+    });
+
+    it('allows execution when all CPI programs are trusted', async () => {
+      const orchestrator = new SecurityOrchestrator({
+        blockOnSimulationFailure: false,
+      });
+      const kp = Keypair.generate();
+      const wallet = makeWalletMock(kp);
+
+      const connection = {
+        simulateTransaction: vi.fn(async () => ({
+          value: {
+            err: null,
+            logs: [],
+            innerInstructions: [
+              {
+                index: 0,
+                instructions: [
+                  {
+                    programIdIndex: 0, // System Program (index 0 in legacy tx)
+                    accounts: [0],
+                    data: '',
+                  },
+                ],
+              },
+            ],
+          },
+          context: { slot: 1 },
+        })),
+        sendRawTransaction: vi.fn(async () => 'mock-sig'),
+        confirmTransaction: vi.fn(async () => ({ value: { err: null }, context: { slot: 1 } })),
+      } as any;
+
+      const tx = makeSignableTransferTx(50_000_000, kp);
+      const result = await orchestrator.submitTransaction('agent-1', 'Transfer 0.05 SOL', tx, {
+        amount: 0.05,
+        walletAddress: wallet.publicKey.toBase58(),
+      });
+
+      const execResult = await orchestrator.executeTransaction(result.intentId, wallet as any, connection);
+      expect(execResult.status).toBe('executed');
+    });
+  });
+
+  // =========================================================================
+  // TransactionSigner Interface (MWA — Feature #9)
+  // =========================================================================
+
+  describe('TransactionSigner (MWA) support', () => {
+    it('accepts TransactionSigner interface for execution', async () => {
+      const orchestrator = new SecurityOrchestrator({ blockOnSimulationFailure: false });
+      const kp = Keypair.generate();
+      const connection = makeConnectionMock();
+
+      const tx = makeSignableTransferTx(50_000_000, kp);
+      const result = await orchestrator.submitTransaction('agent-1', 'Transfer 0.05 SOL', tx, {
+        amount: 0.05,
+        walletAddress: kp.publicKey.toBase58(),
+      });
+
+      // Create a minimal TransactionSigner (not WalletContextState)
+      const signer = {
+        publicKey: kp.publicKey,
+        signTransaction: async <T extends any>(transaction: T): Promise<T> => {
+          if (transaction instanceof Transaction) {
+            transaction.partialSign(kp);
+          }
+          return transaction;
+        },
+      };
+
+      const execResult = await orchestrator.executeTransaction(result.intentId, signer as any, connection);
+      expect(execResult.status).toBe('executed');
+    });
+
+    it('rejects TransactionSigner with wrong publicKey', async () => {
+      const orchestrator = new SecurityOrchestrator();
+      const kp = Keypair.generate();
+      const wrongKp = Keypair.generate();
+      const connection = makeConnectionMock();
+
+      const tx = makeSignableTransferTx(50_000_000, kp);
+      const result = await orchestrator.submitTransaction('agent-1', 'Transfer 0.05 SOL', tx, {
+        amount: 0.05,
+        walletAddress: kp.publicKey.toBase58(),
+      });
+
+      const wrongSigner = {
+        publicKey: wrongKp.publicKey,
+        signTransaction: async <T extends any>(transaction: T): Promise<T> => transaction,
+      };
+
+      const execResult = await orchestrator.executeTransaction(result.intentId, wrongSigner as any, connection);
+      expect(execResult.status).toBe('rejected');
+      expect(execResult.error).toContain('does not own');
+    });
+  });
 });

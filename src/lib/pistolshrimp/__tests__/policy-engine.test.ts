@@ -579,4 +579,423 @@ describe('PolicyEngine (Gate 3)', () => {
       expect(engine2.getDailySpend('walletA')).toBe(0);
     });
   });
+
+  // =========================================================================
+  // BPF Upgrade Detection (Feature #4)
+  // =========================================================================
+
+  describe('BPF upgrade detection', () => {
+    const BPF_LOADER = 'BPFLoaderUpgradeab1e11111111111111111111111';
+
+    it('flags transactions targeting BPF Upgradeable Loader', () => {
+      const from = makePayer();
+      const tx = new Transaction();
+      tx.add(new TransactionInstruction({
+        programId: new PublicKey(BPF_LOADER),
+        keys: [
+          { pubkey: makePayer(), isSigner: false, isWritable: true },
+          { pubkey: from, isSigner: true, isWritable: false },
+        ],
+        data: Buffer.from([3]), // upgrade instruction
+      }));
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+
+      const intent = makeIntent({
+        description: 'Upgrade program',
+        program: BPF_LOADER,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.passed).toBe(false);
+      expect(result.violations.some(v => v.rule === 'bpf_upgrade_detected')).toBe(true);
+    });
+
+    it('does not flag normal System Program transactions as BPF upgrades', () => {
+      const tx = makeTransferTx(50_000_000);
+      const intent = makeIntent({ transaction: tx });
+      const result = engine.validateIntent(intent);
+      expect(result.violations.filter(v => v.rule === 'bpf_upgrade_detected').length).toBe(0);
+    });
+  });
+
+  // =========================================================================
+  // Destination Address Reputation (Feature #3)
+  // =========================================================================
+
+  describe('destination address reputation', () => {
+    it('blocks transactions to known drainer addresses', () => {
+      const from = makePayer();
+      const drainerAddress = 'DRaiNEr1111111111111111111111111111111111111';
+      const tx = new Transaction();
+      tx.add(
+        SystemProgram.transfer({
+          fromPubkey: from,
+          toPubkey: new PublicKey(drainerAddress),
+          lamports: 50_000_000,
+        })
+      );
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+
+      const intent = makeIntent({
+        description: 'Transfer SOL',
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.passed).toBe(false);
+      expect(result.violations.some(v => v.rule === 'known_drainer_address')).toBe(true);
+    });
+
+    it('allows transactions to non-drainer addresses', () => {
+      const tx = makeTransferTx(50_000_000);
+      const intent = makeIntent({ transaction: tx });
+      const result = engine.validateIntent(intent);
+      expect(result.violations.filter(v => v.rule === 'known_drainer_address').length).toBe(0);
+    });
+
+    it('catches drainer address in multi-instruction tx', () => {
+      const from = makePayer();
+      const drainerAddress = 'FakeJUP111111111111111111111111111111111111';
+      const tx = new Transaction();
+      // First instruction: benign transfer
+      tx.add(SystemProgram.transfer({ fromPubkey: from, toPubkey: makePayer(), lamports: 1000 }));
+      // Second instruction: transfer to drainer
+      tx.add(SystemProgram.transfer({
+        fromPubkey: from,
+        toPubkey: new PublicKey(drainerAddress),
+        lamports: 50_000_000,
+      }));
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+
+      const intent = makeIntent({ description: 'Transfer SOL', transaction: tx });
+      const result = engine.validateIntent(intent);
+      expect(result.violations.some(v => v.rule === 'known_drainer_address')).toBe(true);
+    });
+  });
+
+  // =========================================================================
+  // Token-2022 Extension Detection (Feature #2)
+  // =========================================================================
+
+  describe('Token-2022 extension detection', () => {
+    const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+
+    function makeToken2022Tx(extensionByte: number): Transaction {
+      const from = makePayer();
+      // Instruction data with the extension type byte
+      const data = Buffer.alloc(10);
+      data[0] = 25; // Some Token-2022 extension instruction type
+      data[1] = extensionByte; // Extension type
+      const tx = new Transaction();
+      tx.add(new TransactionInstruction({
+        programId: new PublicKey(TOKEN_2022),
+        keys: [
+          { pubkey: makePayer(), isSigner: false, isWritable: true },
+          { pubkey: from, isSigner: true, isWritable: false },
+        ],
+        data,
+      }));
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+      return tx;
+    }
+
+    it('flags PermanentDelegate extension (type 35)', () => {
+      const tx = makeToken2022Tx(35);
+      const intent = makeIntent({
+        description: 'Initialize token with extensions',
+        program: TOKEN_2022,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.token2022Warnings).toBeDefined();
+      expect(result.token2022Warnings!.some(w => w.extensionName === 'PermanentDelegate')).toBe(true);
+      expect(result.violations.some(v => v.rule === 'token2022_dangerous_extension')).toBe(true);
+    });
+
+    it('flags TransferHook extension (type 36)', () => {
+      const tx = makeToken2022Tx(36);
+      const intent = makeIntent({
+        description: 'Initialize token with hooks',
+        program: TOKEN_2022,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.token2022Warnings!.some(w => w.extensionName === 'TransferHook')).toBe(true);
+    });
+
+    it('flags ConfidentialTransfer extension (type 37)', () => {
+      const tx = makeToken2022Tx(37);
+      const intent = makeIntent({
+        description: 'Initialize confidential transfer',
+        program: TOKEN_2022,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.token2022Warnings!.some(w => w.extensionName === 'ConfidentialTransfer')).toBe(true);
+    });
+
+    it('does not flag normal Token-2022 operations', () => {
+      const tx = makeTokenApproveTx(TOKEN_2022, 1000n);
+      const intent = makeIntent({
+        description: 'Approve tokens',
+        program: TOKEN_2022,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      // Normal approve won't trigger extension warnings (data[0]=4, data[1]=low byte of amount)
+      const extensionWarnings = result.token2022Warnings?.filter(
+        w => w.extensionName === 'PermanentDelegate' || w.extensionName === 'TransferHook'
+      ) || [];
+      expect(extensionWarnings.length).toBe(0);
+    });
+
+    it('can be disabled via config', () => {
+      const disabledEngine = new PolicyEngine({ enableToken2022Checks: false });
+      const tx = makeToken2022Tx(35);
+      const intent = makeIntent({
+        description: 'Initialize token with extensions',
+        program: TOKEN_2022,
+        transaction: tx,
+      });
+      const result = disabledEngine.validateIntent(intent);
+      expect(result.token2022Warnings).toBeUndefined();
+    });
+  });
+
+  // =========================================================================
+  // Multi-Asset Drain Pattern Detection (Feature #1)
+  // =========================================================================
+
+  describe('drain pattern detection', () => {
+    it('detects 3+ distinct recipients in one tx', () => {
+      const from = makePayer();
+      const tx = new Transaction();
+      for (let i = 0; i < 4; i++) {
+        tx.add(SystemProgram.transfer({
+          fromPubkey: from,
+          toPubkey: Keypair.generate().publicKey,
+          lamports: 10_000_000,
+        }));
+      }
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+
+      const intent = makeIntent({
+        description: 'Transfer SOL to multiple recipients',
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.drainPattern).toBeDefined();
+      expect(result.drainPattern!.detected).toBe(true);
+      expect(result.drainPattern!.distinctRecipients).toBeGreaterThanOrEqual(3);
+      expect(result.violations.some(v => v.rule === 'drain_pattern_detected')).toBe(true);
+    });
+
+    it('does not flag 2 recipients', () => {
+      const from = makePayer();
+      const tx = new Transaction();
+      tx.add(SystemProgram.transfer({ fromPubkey: from, toPubkey: makePayer(), lamports: 10_000_000 }));
+      tx.add(SystemProgram.transfer({ fromPubkey: from, toPubkey: makePayer(), lamports: 10_000_000 }));
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+
+      const intent = makeIntent({
+        description: 'Transfer SOL to 2 recipients',
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.drainPattern?.detected).toBe(false);
+    });
+
+    it('does not flag transfers to same recipient', () => {
+      const from = makePayer();
+      const to = makePayer();
+      const tx = new Transaction();
+      for (let i = 0; i < 5; i++) {
+        tx.add(SystemProgram.transfer({ fromPubkey: from, toPubkey: to, lamports: 10_000_000 }));
+      }
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+
+      const intent = makeIntent({
+        description: 'Transfer SOL multiple times to same address',
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.drainPattern?.detected).toBe(false);
+      expect(result.drainPattern?.distinctRecipients).toBe(1);
+    });
+
+    it('can be disabled via config', () => {
+      const disabledEngine = new PolicyEngine({ enableDrainDetection: false });
+      const from = makePayer();
+      const tx = new Transaction();
+      for (let i = 0; i < 4; i++) {
+        tx.add(SystemProgram.transfer({ fromPubkey: from, toPubkey: makePayer(), lamports: 10_000_000 }));
+      }
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+
+      const intent = makeIntent({ description: 'Transfer', transaction: tx });
+      const result = disabledEngine.validateIntent(intent);
+      expect(result.drainPattern).toBeUndefined();
+    });
+  });
+
+  // =========================================================================
+  // Swap Slippage Validation (Feature #7)
+  // =========================================================================
+
+  describe('swap slippage validation', () => {
+    const JUPITER_V6 = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
+
+    function makeJupiterSwapTx(slippageBps: number): Transaction {
+      const from = makePayer();
+      // Jupiter v6 route instruction: 8 byte discriminator + 2 byte slippage bps
+      const data = Buffer.alloc(20);
+      // Anchor discriminator (8 bytes)
+      data.writeUInt32LE(0xdeadbeef, 0);
+      data.writeUInt32LE(0xcafebabe, 4);
+      // Slippage bps (u16 LE at offset 8)
+      data.writeUInt16LE(slippageBps, 8);
+
+      const tx = new Transaction();
+      tx.add(new TransactionInstruction({
+        programId: new PublicKey(JUPITER_V6),
+        keys: [
+          { pubkey: from, isSigner: true, isWritable: true },
+          { pubkey: makePayer(), isSigner: false, isWritable: true },
+        ],
+        data,
+      }));
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+      return tx;
+    }
+
+    it('blocks swap with >10% slippage', () => {
+      const tx = makeJupiterSwapTx(5000); // 50%
+      const intent = makeIntent({
+        description: 'Swap SOL for USDC',
+        program: JUPITER_V6,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.swapSlippage).toBeDefined();
+      expect(result.swapSlippage!.bps).toBe(5000);
+      expect(result.violations.some(v => v.rule === 'excessive_slippage')).toBe(true);
+    });
+
+    it('flags swap with >3% slippage as high risk', () => {
+      const tx = makeJupiterSwapTx(500); // 5%
+      const intent = makeIntent({
+        description: 'Swap SOL for USDC',
+        program: JUPITER_V6,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.swapSlippage!.bps).toBe(500);
+      expect(result.violations.some(v => v.rule === 'high_slippage')).toBe(true);
+      expect(result.requiresConfirmation).toBe(true);
+    });
+
+    it('allows swap with reasonable slippage', () => {
+      const tx = makeJupiterSwapTx(100); // 1%
+      const intent = makeIntent({
+        description: 'Swap SOL for USDC',
+        program: JUPITER_V6,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.violations.filter(v => v.rule === 'excessive_slippage').length).toBe(0);
+      expect(result.violations.filter(v => v.rule === 'high_slippage').length).toBe(0);
+    });
+
+    it('respects custom maxSlippageBps', () => {
+      const strictEngine = new PolicyEngine({ maxSlippageBps: 50 }); // 0.5%
+      const tx = makeJupiterSwapTx(100); // 1% > 0.5%
+      const intent = makeIntent({
+        description: 'Swap SOL for USDC',
+        program: JUPITER_V6,
+        transaction: tx,
+      });
+      const result = strictEngine.validateIntent(intent);
+      expect(result.violations.some(v => v.rule === 'high_slippage')).toBe(true);
+    });
+  });
+
+  // =========================================================================
+  // MEV/Sandwich Attack Warning (Feature #8)
+  // =========================================================================
+
+  describe('MEV warning', () => {
+    const JUPITER_V6 = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
+
+    it('warns for large swap (>= mevWarningThresholdSol)', () => {
+      const from = makePayer();
+      const data = Buffer.alloc(20);
+      data.writeUInt32LE(0xdeadbeef, 0);
+      data.writeUInt32LE(0xcafebabe, 4);
+      data.writeUInt16LE(100, 8); // 1% slippage
+
+      const tx = new Transaction();
+      // Add a SOL transfer to set the amount
+      tx.add(SystemProgram.transfer({
+        fromPubkey: from,
+        toPubkey: makePayer(),
+        lamports: 2_000_000_000, // 2 SOL
+      }));
+      // Add Jupiter swap instruction
+      tx.add(new TransactionInstruction({
+        programId: new PublicKey(JUPITER_V6),
+        keys: [
+          { pubkey: from, isSigner: true, isWritable: true },
+          { pubkey: makePayer(), isSigner: false, isWritable: true },
+        ],
+        data,
+      }));
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+
+      const intent = makeIntent({
+        description: 'Swap 2 SOL for USDC',
+        amount: 2,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.violations.some(v => v.rule === 'mev_exposure_warning')).toBe(true);
+      expect(result.requiresConfirmation).toBe(true);
+    });
+
+    it('does not warn for small swaps', () => {
+      const from = makePayer();
+      const data = Buffer.alloc(20);
+      data.writeUInt32LE(0xdeadbeef, 0);
+      data.writeUInt32LE(0xcafebabe, 4);
+      data.writeUInt16LE(100, 8);
+
+      const tx = new Transaction();
+      tx.add(new TransactionInstruction({
+        programId: new PublicKey(JUPITER_V6),
+        keys: [
+          { pubkey: from, isSigner: true, isWritable: true },
+          { pubkey: makePayer(), isSigner: false, isWritable: true },
+        ],
+        data,
+      }));
+      tx.feePayer = from;
+      tx.recentBlockhash = PublicKey.default.toBase58();
+
+      const intent = makeIntent({
+        description: 'Swap small amount',
+        amount: 0.5,
+        transaction: tx,
+      });
+      const result = engine.validateIntent(intent);
+      expect(result.violations.filter(v => v.rule === 'mev_exposure_warning').length).toBe(0);
+    });
+  });
 });

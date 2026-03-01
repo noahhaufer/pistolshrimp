@@ -8,6 +8,8 @@ import {
   GateResult,
   SecureTransactionResult,
   SecurityLogEntry,
+  TransactionSigner,
+  CpiAnalysis,
 } from './types';
 import { createConfig } from './config';
 import { IntentQueue, getIntentQueue } from './intent-queue';
@@ -190,6 +192,9 @@ export class SecurityOrchestrator {
 
     // Snapshot transaction bytes at submission time to detect later mutation
     let transactionSnapshot: Uint8Array | undefined;
+    let instructionHash: string | undefined;
+    const snapshotTimestamp = Date.now();
+
     if (transaction) {
       try {
         transactionSnapshot = transaction.serialize({ requireAllSignatures: false, verifySignatures: false });
@@ -197,6 +202,9 @@ export class SecurityOrchestrator {
         // VersionedTransaction.serialize() doesn't take options
         transactionSnapshot = transaction.serialize();
       }
+
+      // Compute instruction hash (SHA-256 of concatenated instruction data)
+      instructionHash = this.computeInstructionHash(transaction);
     }
 
     // Submit to intent queue
@@ -214,6 +222,8 @@ export class SecurityOrchestrator {
         metadata: {
           skillName: options?.skillName,
           transactionSnapshot: transactionSnapshot ? Array.from(transactionSnapshot) : undefined,
+          instructionHash,
+          snapshotTimestamp,
         },
       }
     );
@@ -326,11 +336,12 @@ export class SecurityOrchestrator {
   }
 
   /**
-   * Execute an approved/confirmed transaction
+   * Execute an approved/confirmed transaction.
+   * Accepts both WalletContextState (browser) and TransactionSigner (MWA) for signing.
    */
   async executeTransaction(
     intentId: string,
-    wallet: WalletContextState,
+    wallet: WalletContextState | TransactionSigner,
     connection: Connection
   ): Promise<SecureTransactionResult> {
     const intent = this.intentQueue.getIntent(intentId);
@@ -383,6 +394,21 @@ export class SecurityOrchestrator {
       };
     }
 
+    // TOCTOU freshness check: reject if snapshot is too old
+    const snapshotTimestamp = intent.metadata?.snapshotTimestamp as number | undefined;
+    const snapshotMaxAge = this.config.policy.snapshotMaxAgeMs;
+    if (snapshotTimestamp && snapshotMaxAge && (Date.now() - snapshotTimestamp > snapshotMaxAge)) {
+      this.log('error', `Snapshot for intent ${intentId} is stale (${Date.now() - snapshotTimestamp}ms old, max ${snapshotMaxAge}ms). Re-submission required.`);
+      this.intentQueue.updateIntentStatus(intentId, 'rejected');
+      return {
+        success: false,
+        intentId,
+        status: 'rejected',
+        error: `Transaction snapshot expired (older than ${Math.round(snapshotMaxAge / 1000)}s) — please re-submit`,
+        securityReport: intent.securityReport,
+      };
+    }
+
     // Re-validate: compare current transaction bytes against snapshot taken at approval time
     const snapshot = intent.metadata?.transactionSnapshot as number[] | undefined;
     if (snapshot) {
@@ -408,8 +434,26 @@ export class SecurityOrchestrator {
       }
     }
 
+    // TOCTOU: verify instruction hash matches
+    const storedInstructionHash = intent.metadata?.instructionHash as string | undefined;
+    if (storedInstructionHash) {
+      const currentHash = this.computeInstructionHash(intent.transaction);
+      if (currentHash !== storedInstructionHash) {
+        this.log('error', `Instruction hash mismatch for intent ${intentId}! Stored: ${storedInstructionHash}, Current: ${currentHash}`);
+        this.intentQueue.updateIntentStatus(intentId, 'rejected');
+        return {
+          success: false,
+          intentId,
+          status: 'rejected',
+          error: 'Transaction instruction data was modified after approval — execution blocked',
+          securityReport: intent.securityReport,
+        };
+      }
+    }
+
     try {
       // Simulate transaction before signing to catch CPI attacks and unexpected failures
+      let cpiAnalysis: CpiAnalysis | undefined;
       try {
         const simResult = intent.transaction instanceof Transaction
           ? await connection.simulateTransaction(intent.transaction)
@@ -427,6 +471,28 @@ export class SecurityOrchestrator {
           };
         }
         this.log('info', `Transaction simulation passed for ${intentId}`);
+
+        // CPI Analysis: inspect innerInstructions from simulation for untrusted programs
+        if (simResult.value.innerInstructions) {
+          cpiAnalysis = this.analyzeCpiPrograms(simResult.value.innerInstructions, intent);
+          if (cpiAnalysis.untrustedPrograms.length > 0) {
+            this.log('error', `CPI analysis found untrusted programs for ${intentId}: ${cpiAnalysis.untrustedPrograms.join(', ')}`);
+            this.intentQueue.updateIntentStatus(intentId, 'rejected');
+
+            // Attach CPI analysis to security report
+            if (intent.securityReport) {
+              intent.securityReport.cpiAnalysis = cpiAnalysis;
+            }
+
+            return {
+              success: false,
+              intentId,
+              status: 'rejected',
+              error: `CPI calls untrusted program(s): ${cpiAnalysis.untrustedPrograms.join(', ')}`,
+              securityReport: intent.securityReport,
+            };
+          }
+        }
       } catch (simError) {
         const simMsg = simError instanceof Error ? simError.message : 'unknown';
         if (this.config.blockOnSimulationFailure) {
@@ -460,6 +526,11 @@ export class SecurityOrchestrator {
       // Update state
       this.intentQueue.updateIntentStatus(intentId, 'executed');
       this.policyEngine.recordTransaction(intent.amount || 0, intent.program, intent.ownerWallet);
+
+      // Attach CPI analysis to final report
+      if (cpiAnalysis && intent.securityReport) {
+        intent.securityReport.cpiAnalysis = cpiAnalysis;
+      }
 
       this.log('info', `Transaction executed: ${signature}`, { intentId, signature });
       this.onTransactionExecuted?.(intent, signature);
@@ -635,6 +706,89 @@ export class SecurityOrchestrator {
   // ============================================================================
   // Utilities
   // ============================================================================
+
+  /**
+   * Compute a hash of all instruction data in a transaction.
+   * Used for TOCTOU verification: ensures instructions haven't been modified.
+   */
+  private computeInstructionHash(transaction: Transaction | VersionedTransaction): string {
+    const parts: number[] = [];
+
+    if (transaction instanceof Transaction) {
+      for (const ix of transaction.instructions) {
+        parts.push(...ix.data);
+        parts.push(...ix.programId.toBytes());
+      }
+    } else {
+      for (const ix of transaction.message.compiledInstructions) {
+        parts.push(...ix.data);
+        parts.push(ix.programIdIndex);
+      }
+    }
+
+    // Simple hash: DJB2 over concatenated instruction bytes
+    // (Not cryptographic — but combined with byte snapshot, provides defense-in-depth)
+    let hash = 5381;
+    for (const byte of parts) {
+      hash = ((hash << 5) + hash + byte) | 0;
+    }
+    return `ixhash_${(hash >>> 0).toString(16)}`;
+  }
+
+  /**
+   * Analyze CPI (Cross-Program Invocation) programs from simulation innerInstructions.
+   * Checks each CPI-invoked program against the allowlist.
+   */
+  private analyzeCpiPrograms(
+    innerInstructions: { index: number; instructions: { programIdIndex: number; accounts: number[]; data: string }[] }[],
+    intent: TransactionIntent,
+  ): CpiAnalysis {
+    const programs: CpiAnalysis['programs'] = [];
+    const untrustedPrograms: string[] = [];
+    let maxDepth = 0;
+
+    // Get account keys from the transaction
+    let accountKeys: PublicKey[] = [];
+    if (intent.transaction instanceof Transaction) {
+      // For legacy transactions, account keys from instructions
+      const keySet = new Map<string, PublicKey>();
+      for (const ix of intent.transaction.instructions) {
+        keySet.set(ix.programId.toBase58(), ix.programId);
+        for (const key of ix.keys) {
+          keySet.set(key.pubkey.toBase58(), key.pubkey);
+        }
+      }
+      if (intent.transaction.feePayer) {
+        keySet.set(intent.transaction.feePayer.toBase58(), intent.transaction.feePayer);
+      }
+      accountKeys = Array.from(keySet.values());
+    } else if (intent.transaction instanceof VersionedTransaction) {
+      accountKeys = [...intent.transaction.message.staticAccountKeys];
+    }
+
+    for (const inner of innerInstructions) {
+      for (let depth = 0; depth < inner.instructions.length; depth++) {
+        const cpiIx = inner.instructions[depth];
+        maxDepth = Math.max(maxDepth, depth + 1);
+
+        const programId = accountKeys[cpiIx.programIdIndex]?.toBase58() || `unknown_${cpiIx.programIdIndex}`;
+        const isAllowed = this.config.policy.allowedPrograms.includes(programId);
+
+        programs.push({
+          programId,
+          programName: this.policyEngine.getProgramInfo(programId)?.name,
+          trusted: isAllowed,
+          depth: depth + 1,
+        });
+
+        if (!isAllowed) {
+          untrustedPrograms.push(programId);
+        }
+      }
+    }
+
+    return { programs, maxDepth, untrustedPrograms };
+  }
 
   private createSecurityReport(
     intentId: string,

@@ -111,6 +111,13 @@ Validates the **actual decoded instruction**, not the agent's description:
 - ALL instructions validated, not just the first (prevents multi-instruction hiding)
 - Transaction simulation via `simulateTransaction()` before signing
 - Per-wallet spend tracking persisted to localStorage
+- **BPF upgrade detection** — blocks transactions targeting the BPF Upgradeable Loader
+- **Destination reputation** — checks all recipients against known drainer address blocklist (20 addresses)
+- **Token-2022 extension detection** — flags PermanentDelegate, TransferHook, ConfidentialTransfer
+- **Multi-asset drain detection** — flags 3+ distinct recipients in a single transaction
+- **Swap slippage validation** — blocks Jupiter/Orca swaps with >10% slippage, warns at >3%
+- **MEV/sandwich awareness** — warns for large swaps (≥1 SOL) about MEV exposure
+- **CPI depth analysis** — post-simulation, checks all cross-program invocations against allowlist
 
 ### Gate 4 — Human Confirmation
 
@@ -127,7 +134,10 @@ Per-transaction signing authority. The wallet signs a single transaction and aut
 
 Additional protections:
 - Transaction bytes are snapshotted at approval time; any mutation before signing is blocked
+- Instruction hash computed independently for defense-in-depth TOCTOU protection
+- Snapshot freshness check: re-submission required if snapshot is older than 5 minutes
 - Wallet ownership verified on confirm/reject/execute (agents can't approve their own intents)
+- Mobile Wallet Adapter (MWA) support via `TransactionSigner` interface
 
 ## Quick Start
 
@@ -251,6 +261,12 @@ if (result.status === 'approved') {
 | `blockUnknownPrograms` | false | Block programs not on the allowlist |
 | `requireConfirmationForNewPrograms` | true | Require human approval for unfamiliar programs |
 | `enableAnomalyDetection` | true | Statistical outlier detection |
+| `maxSlippageBps` | 300 | Max swap slippage in basis points (3%) |
+| `mevWarningThresholdSol` | 1 | Warn about MEV for swaps above this |
+| `maxCpiDepth` | 3 | Max CPI depth before flagging |
+| `enableDrainDetection` | true | Multi-asset drain pattern detection |
+| `enableToken2022Checks` | true | Token-2022 dangerous extension detection |
+| `snapshotMaxAgeMs` | 300,000 | Max snapshot age before re-submission (5 min) |
 
 ### Default Rate Limits
 
@@ -273,31 +289,20 @@ if (result.status === 'approved') {
 
 ## Threat Model
 
-### Protected
+Pistol Shrimp protects against 13 real-world Solana attack vectors across 6 categories. Every protection exists because this attack has happened — or is actively happening — in the wild.
 
-| Threat | How |
-|--------|-----|
-| Malicious skill drains wallet | Agent never has signing authority; intent queue + policy engine |
-| Supply chain attack via ClawHub | Gate 1 quarantines known malware patterns and IOCs |
-| Misleading tx description tricks approver | Policy engine + human review use decoded instructions, not descriptions |
-| Compromised agent floods queue (DoS) | Rate limiting, burst detection, queue depth caps, exponential backoff |
-| Unlimited token approval | Raw byte inspection for u64::MAX + broad threshold detection |
-| Transaction mutation after approval | Byte snapshot at approval time, blocked if changed before signing |
+| Category | Threats Covered |
+|----------|----------------|
+| **Wallet Drains** | Unlimited token approvals, multi-asset drain patterns, known drainer addresses |
+| **Transaction Manipulation** | Bait-and-switch (TOCTOU), description mismatch, stale snapshot replay |
+| **DeFi Exploits** | Sandwich attacks via bad slippage, MEV exposure on large swaps |
+| **Token-2022 Exploits** | PermanentDelegate, TransferHook, ConfidentialTransfer |
+| **Program-Level Attacks** | CPI into malicious programs, program upgrade attacks |
+| **Agent-Level Attacks** | Prompt injection, malicious skill supply chain, queue flooding DoS |
 
-### Partial / Expected
+Each attack is documented with: how it works, why it's dangerous, and exactly how Pistol Shrimp catches it.
 
-| Threat | Limitation |
-|--------|------------|
-| Prompt injection exfiltrates non-wallet data | Context isolation helps, but requires agent-runtime fixes beyond middleware scope |
-| Novel zero-day injection bypasses Gate 2 | Expected — architecture ensures Gates 3-5 protect wallets independently |
-
-### Out of Scope
-
-| Threat | Why |
-|--------|-----|
-| Compromised agent manipulates non-tx actions | Pistol Shrimp gates wallet operations only |
-| OpenClaw core vulnerabilities | Requires fixes from OpenClaw team |
-| Client-side bypass via DevTools | Runs in browser; production deployment needs server-side enforcement |
+**[Read the full threat documentation &rarr;](./THREATS.md)**
 
 ## Project Structure
 
@@ -326,15 +331,15 @@ src/
 ## Testing
 
 ```bash
-# Unit tests (165 tests, no network, ~600ms)
+# Unit tests (192 tests, no network, ~800ms)
 npm test
 
-# Integration tests (19 tests, hits Solana devnet, ~5s)
+# Integration tests (22 tests, hits Solana devnet, ~5s)
 # Requires .env with DEVNET_PRIVATE_KEY and DEVNET_PUBLIC_KEY
 npm run test:integration
 ```
 
-Unit tests cover all five SDK modules (skill scanner, prompt firewall, policy engine, intent queue, orchestrator). Integration tests verify transaction decoding, simulation, policy enforcement, mutation detection, and signing round-trips against a real devnet RPC node.
+Unit tests cover all five SDK modules (skill scanner, prompt firewall, policy engine, intent queue, orchestrator) plus the 9 new security features (drain detection, Token-2022 extensions, BPF upgrade, destination reputation, CPI analysis, TOCTOU freshness, slippage validation, MEV awareness, MWA signer). Integration tests verify transaction decoding, simulation, policy enforcement, mutation detection, and signing round-trips against a real devnet RPC node.
 
 ## Tech Stack
 
@@ -345,14 +350,15 @@ Unit tests cover all five SDK modules (skill scanner, prompt firewall, policy en
 
 ## Security Review
 
-All 16 findings from the initial security audit have been resolved. See [SECURITY-REVIEW.md](./SECURITY-REVIEW.md) for the full checklist.
+All 16 findings from the initial security audit have been resolved, plus 9 new security features added. See [SECURITY-REVIEW.md](./SECURITY-REVIEW.md) for the full checklist.
 
 | Severity | Resolved |
 |----------|----------|
-| Critical | 4/4 |
-| High | 5/5 |
-| Medium | 5/5 |
-| Low | 2/2 |
+| Critical (v1) | 4/4 |
+| High (v1) | 5/5 |
+| Medium (v1) | 5/5 |
+| Low (v1) | 2/2 |
+| v2 Enhancements | 9/9 |
 
 ## License
 
