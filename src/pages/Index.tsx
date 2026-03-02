@@ -522,9 +522,9 @@ function Sandbox() {
           Test each security gate individually. Paste code, prompts, or craft custom transactions.
         </p>
       </div>
-      <TransactionLifecycleDemo />
       <SandboxSkillScanner />
       <SandboxFirewall />
+      <TransactionLifecycleDemo />
     </div>
   );
 }
