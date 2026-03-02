@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import {
   Transaction,
   TransactionInstruction,
@@ -95,13 +94,10 @@ function DemoContent() {
               <img src="/logo-transparent.png" alt="Pistol Shrimp" className="w-10 h-10 object-contain" />
               <span className="text-lg font-bold text-white">Pistol Shrimp</span>
             </a>
-            <div className="flex items-center gap-3">
-              <a href="https://github.com/noahhaufer/pistolshrimp" target="_blank" rel="noopener noreferrer"
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs text-muted-foreground hover:text-white hover:border-foreground/20 transition-colors">
-                <Github className="w-3.5 h-3.5" /> GitHub
-              </a>
-              <WalletMultiButton />
-            </div>
+            <a href="https://github.com/noahhaufer/pistolshrimp" target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs text-muted-foreground hover:text-white hover:border-foreground/20 transition-colors">
+              <Github className="w-3.5 h-3.5" /> GitHub
+            </a>
           </div>
         </div>
       </header>
