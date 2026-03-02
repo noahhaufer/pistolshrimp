@@ -241,38 +241,11 @@ function SandboxSkillScanner() {
     }
 
     // Pattern 3: Bare repo — github.com/owner/repo
-    // Probe for skill-like files first, then fall back to README
+    // Use GitHub API to fetch repo tree, grab multiple files, concat for deep scan
     const repoMatch = url.match(/github\.com\/([^/]+)\/([^/]+)\/?$/);
     if (repoMatch) {
       const [, owner, repo] = repoMatch;
-      const raw = (branch: string, path: string) =>
-        `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
-
-      const skillPaths = [
-        'AGENTS.md', 'SOUL.md', 'agents.md', 'soul.md',
-        'skills/index.ts', 'skills/index.js', 'skill.ts', 'skill.js',
-        'src/skills/index.ts', 'src/skill.ts',
-        '.claude/skills/index.md', '.claude/AGENTS.md',
-        'README.md',
-      ];
-
-      // Probe main then master — fetch all skill files found, concat them
-      for (const branch of ['main', 'master']) {
-        const found: { path: string; url: string }[] = [];
-        await Promise.all(skillPaths.map(async (path) => {
-          const res = await fetch(raw(branch, path), { method: 'HEAD' });
-          if (res.ok) found.push({ path, url: raw(branch, path) });
-        }));
-
-        if (found.length > 0) {
-          // Prefer skill-specific files over README
-          const best = found.find(f => f.path !== 'README.md') || found[0];
-          return { raw: best.url, fileName: best.path.split('/').pop() || 'imported', owner, repo };
-        }
-      }
-
-      // Nothing found — fall back to README on main
-      return { raw: raw('main', 'README.md'), fileName: 'README.md', owner, repo };
+      return { raw: `__repo_scan__`, fileName: repo, owner, repo };
     }
 
     throw new Error('Unrecognized URL. Expected: github.com/owner/repo, .../blob/branch/path, or .../tree/branch/path');
@@ -283,11 +256,53 @@ function SandboxSkillScanner() {
     setIsFetching(true); setResult(null);
     try {
       const { raw, fileName, owner, repo } = await resolveGithubUrl(githubUrl.trim());
-      const res = await fetch(raw);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      setName(fileName); setContent(text);
-      setResult(scanSkill(`skill_gh_${Date.now()}`, fileName, `github:${owner}/${repo}`, text));
+
+      if (raw === '__repo_scan__') {
+        // Deep scan: use GitHub API to get repo tree, fetch up to 8 relevant files
+        const scanExts = /\.(md|ts|js|py|sh|yaml|yml|json|txt)$/i;
+        const priorityFiles = /^(readme|agents|soul|skill|index|main|app|setup|install)\b/i;
+        let branch = 'main';
+        let treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`);
+        if (!treeRes.ok) {
+          branch = 'master';
+          treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`);
+        }
+        if (!treeRes.ok) throw new Error(`GitHub API: ${treeRes.status}`);
+        const tree = (await treeRes.json()).tree as { path: string; type: string; size?: number }[];
+
+        // Filter to scannable files, sort priority files first, cap at 8
+        const files = tree
+          .filter(f => f.type === 'blob' && scanExts.test(f.path) && (f.size || 0) < 200_000)
+          .sort((a, b) => {
+            const aP = priorityFiles.test(a.path.split('/').pop() || '') ? 0 : 1;
+            const bP = priorityFiles.test(b.path.split('/').pop() || '') ? 0 : 1;
+            return aP - bP;
+          })
+          .slice(0, 8);
+
+        if (files.length === 0) throw new Error('No scannable files found in repo');
+
+        // Fetch all in parallel
+        const rawBase = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}`;
+        const contents = await Promise.all(files.map(async (f) => {
+          const res = await fetch(`${rawBase}/${f.path}`);
+          if (!res.ok) return '';
+          return `\n// === ${f.path} ===\n${await res.text()}`;
+        }));
+
+        const combined = contents.join('\n');
+        const scannedFiles = files.map(f => f.path.split('/').pop()).join(', ');
+        setName(`${repo} (${files.length} files)`);
+        setContent(combined.slice(0, 5000) + (combined.length > 5000 ? '\n...(truncated for display)' : ''));
+        setResult(scanSkill(`skill_gh_${Date.now()}`, `${owner}/${repo}`, `github:${owner}/${repo}`, combined));
+      } else {
+        // Single file fetch
+        const res = await fetch(raw);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        setName(fileName); setContent(text);
+        setResult(scanSkill(`skill_gh_${Date.now()}`, fileName, `github:${owner}/${repo}`, text));
+      }
     } catch (e) {
       setResult({ passed: false, riskScore: 0, threats: [{ type: 'fetch_error', severity: 'low', description: e instanceof Error ? e.message : 'Failed' }] });
     } finally { setIsFetching(false); }
