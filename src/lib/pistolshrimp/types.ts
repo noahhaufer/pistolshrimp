@@ -201,6 +201,10 @@ export type SkillThreatType =
   | 'obfuscated_code'
   | 'unauthorized_mcp';
 
+export interface SkillScanOptions {
+  fileCount?: number;
+}
+
 // ============================================================================
 // Prompt Firewall Types (Gate 2)
 // ============================================================================
@@ -344,8 +348,9 @@ export const DEFAULT_THREAT_INTEL: ThreatIntelligence = {
     'nc -e',
     'bash -i',
     'mnemonic.*grep',
-    'seed.*phrase',
-    'private.*key.*export',
+    // Note: 'seed.*phrase' and 'private.*key.*export' removed — too broad as
+    // malware signatures, causing false positives on crypto/Solana skills.
+    // These are now handled with context-aware logic in scanForCredentialTheft().
   ],
   suspiciousDomains: [
     'bore.pub',

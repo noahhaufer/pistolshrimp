@@ -610,13 +610,14 @@ export class SecurityOrchestrator {
     skillName: string,
     source: string,
     content: string,
-    authorId?: string
+    authorId?: string,
+    options?: import('./types').SkillScanOptions
   ) {
     if (!this.gateFlags.gate1) {
       return { passed: true, skipped: true };
     }
 
-    return this.skillScanner.scanSkill(skillId, skillName, source, content, authorId);
+    return this.skillScanner.scanSkill(skillId, skillName, source, content, authorId, options);
   }
 
   /**

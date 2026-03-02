@@ -51,7 +51,8 @@ interface PistolShrimpContextValue {
     skillName: string,
     source: string,
     content: string,
-    authorId?: string
+    authorId?: string,
+    options?: import('../lib/pistolshrimp/types').SkillScanOptions
   ) => ReturnType<SecurityOrchestrator['scanSkill']>;
   isSkillQuarantined: (skillId: string) => boolean;
 
@@ -185,9 +186,10 @@ export function PistolShrimpProvider({
     skillName: string,
     source: string,
     content: string,
-    authorId?: string
+    authorId?: string,
+    options?: import('../lib/pistolshrimp/types').SkillScanOptions
   ) => {
-    const result = orchestrator.scanSkill(skillId, skillName, source, content, authorId);
+    const result = orchestrator.scanSkill(skillId, skillName, source, content, authorId, options);
     setState(orchestrator.getState());
     return result;
   }, [orchestrator]);

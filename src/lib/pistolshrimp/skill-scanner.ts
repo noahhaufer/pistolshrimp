@@ -2,6 +2,7 @@ import {
   SkillScanResult,
   SkillThreat,
   SkillThreatType,
+  SkillScanOptions,
   ThreatIntelligence,
   DEFAULT_THREAT_INTEL,
   SecurityLogEntry,
@@ -29,7 +30,8 @@ export class SkillScanner {
     skillName: string,
     source: string,
     content: string,
-    authorId?: string
+    authorId?: string,
+    options?: SkillScanOptions
   ): SkillScanResult {
     // Check cache
     const cacheKey = `${skillId}_${this.hashContent(content)}`;
@@ -44,7 +46,11 @@ export class SkillScanner {
     const normalizedContent = content.normalize('NFKC');
 
     // Cap scan length to prevent ReDoS — scan head + tail to catch payloads hidden after cutoff
-    const MAX_SCAN_LENGTH = 100_000;
+    // Scale threshold by file count: multi-file skills are naturally larger
+    const fileCount = options?.fileCount ?? 1;
+    const BASE_SCAN_LENGTH = 100_000;
+    const PER_FILE_ALLOWANCE = 15_000;
+    const MAX_SCAN_LENGTH = BASE_SCAN_LENGTH + Math.max(0, fileCount - 1) * PER_FILE_ALLOWANCE;
     const TAIL_SCAN_LENGTH = 20_000;
     let scanContent: string;
     let tailContent: string | null = null;
@@ -52,11 +58,12 @@ export class SkillScanner {
     if (normalizedContent.length > MAX_SCAN_LENGTH) {
       scanContent = normalizedContent.slice(0, MAX_SCAN_LENGTH);
       tailContent = normalizedContent.slice(-TAIL_SCAN_LENGTH);
+      const avgPerFile = Math.round(normalizedContent.length / fileCount);
       threats.push({
         type: 'obfuscated_code',
         severity: 'medium',
-        description: `Skill content unusually large (${normalizedContent.length} chars) — may contain hidden payload`,
-        indicator: `length: ${normalizedContent.length}`,
+        description: `Skill content unusually large (${normalizedContent.length} chars across ${fileCount} file${fileCount > 1 ? 's' : ''}, ~${avgPerFile} avg/file) — may contain hidden payload`,
+        indicator: `length: ${normalizedContent.length}, files: ${fileCount}`,
       });
     } else {
       scanContent = normalizedContent;
@@ -226,23 +233,28 @@ export class SkillScanner {
     return threats;
   }
 
-  // Scan for credential theft patterns
+  // Scan for credential theft patterns (two-tier: compound = critical, bare mention = low)
   private scanForCredentialTheft(content: string): SkillThreat[] {
     const threats: SkillThreat[] = [];
 
-    const patterns: [RegExp, string][] = [
-      [/\.env\b/gi, 'Environment file access (.env)'],
-      [/mnemonic|seed\s*phrase|recovery\s*phrase/gi, 'Seed phrase/mnemonic access'],
-      [/private\s*key|privatekey|secret\s*key/gi, 'Private key access'],
+    // Exfiltration / file-access verbs that elevate a bare keyword to a real threat
+    // Only counted when within PROXIMITY_WINDOW chars of the credential keyword
+    const exfilVerbs = /(?:readFile|readFileSync|fs\.read|fs\.open|child_process|execSync|exec\(|spawn\(|fetch\s*\(|\.post\s*\(|curl\s|wget\s|XMLHttpRequest|axios\.\w+\(|got\(|request\(|upload\s*\(|exfil|sendTo(?:Remote|Server|External)|\.send\s*\(\s*['"{]https?:)/i;
+    const PROXIMITY_WINDOW = 200;
+
+    // --- Tier 1: Always critical (structural access patterns, not just keywords) ---
+    const criticalPatterns: [RegExp, string][] = [
+      [/(?:fs\.|readFile|readFileSync|open|cat|head)\s*\(?\s*['"]?\.env/gi, 'Reading .env file'],
+      [/(?:read|load|cat|open|fs\.).*(?:id_rsa|id_ed25519)/gi, 'Reading SSH key file'],
+      [/(?:read|load|cat|open|fs\.).*\.ssh/gi, 'Reading SSH directory'],
       [/wallet.*export|export.*wallet/gi, 'Wallet export operation'],
-      [/keystore|keyring/gi, 'Keystore/keyring access'],
-      [/password.*file|credentials?\s*\.\w+/gi, 'Credential file access'],
-      [/\.ssh/gi, 'SSH directory access'],
-      [/id_rsa|id_ed25519/gi, 'SSH key access'],
+      [/(?:fetch\s*\(|\.post\s*\(|curl\s|wget\s|upload|exfil).*(?:mnemonic|seed\s*phrase|private\s*key|secret\s*key|recovery\s*phrase)/gi, 'Exfiltrating key material'],
+      [/(?:mnemonic|seed\s*phrase|private\s*key|secret\s*key|recovery\s*phrase).*(?:fetch\s*\(|\.post\s*\(|curl\s|wget\s|upload|exfil)/gi, 'Exfiltrating key material'],
       [/telegram.*bot.*token|discord.*webhook/gi, 'Exfiltration channel detected'],
+      [/password.*file|credentials?\s*\.\w+/gi, 'Credential file access'],
     ];
 
-    for (const [pattern, description] of patterns) {
+    for (const [pattern, description] of criticalPatterns) {
       if (pattern.test(content)) {
         threats.push({
           type: 'credential_theft',
@@ -250,6 +262,51 @@ export class SkillScanner {
           description: `Detected potential credential theft: ${description}`,
           indicator: content.match(pattern)?.[0],
         });
+      }
+    }
+
+    // --- Tier 2: Bare keyword mentions — only critical if near an exfiltration vector ---
+    const keywordPatterns: [RegExp, string][] = [
+      [/\.env\b/gi, 'Environment file reference (.env)'],
+      [/mnemonic|seed\s*phrase|recovery\s*phrase/gi, 'Seed phrase/mnemonic reference'],
+      [/private\s*key|privatekey|secret\s*key/gi, 'Private key reference'],
+      [/keystore|keyring/gi, 'Keystore/keyring reference'],
+      [/\.ssh/gi, 'SSH directory reference'],
+      [/id_rsa|id_ed25519/gi, 'SSH key reference'],
+    ];
+
+    for (const [pattern, description] of keywordPatterns) {
+      // Reset lastIndex for global regex
+      pattern.lastIndex = 0;
+      const match = pattern.exec(content);
+      if (match) {
+        // Skip if already covered by a critical pattern above
+        const alreadyCovered = threats.some(
+          t => t.severity === 'critical' && t.type === 'credential_theft'
+        );
+        if (alreadyCovered) continue;
+
+        // Check proximity: is an exfiltration verb within PROXIMITY_WINDOW chars?
+        const start = Math.max(0, match.index - PROXIMITY_WINDOW);
+        const end = Math.min(content.length, match.index + match[0].length + PROXIMITY_WINDOW);
+        const neighborhood = content.slice(start, end);
+        const hasNearbyExfil = exfilVerbs.test(neighborhood);
+
+        if (hasNearbyExfil) {
+          threats.push({
+            type: 'credential_theft',
+            severity: 'high',
+            description: `Detected potential credential theft: ${description} (with nearby access/exfil context)`,
+            indicator: match[0],
+          });
+        } else {
+          threats.push({
+            type: 'credential_theft',
+            severity: 'low',
+            description: `Keyword reference: ${description}`,
+            indicator: match[0],
+          });
+        }
       }
     }
 
