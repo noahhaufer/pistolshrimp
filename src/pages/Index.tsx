@@ -241,14 +241,38 @@ function SandboxSkillScanner() {
     }
 
     // Pattern 3: Bare repo — github.com/owner/repo
+    // Probe for skill-like files first, then fall back to README
     const repoMatch = url.match(/github\.com\/([^/]+)\/([^/]+)\/?$/);
     if (repoMatch) {
       const [, owner, repo] = repoMatch;
-      // Try main first, then master
-      const mainUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/README.md`;
-      const res = await fetch(mainUrl);
-      if (res.ok) return { raw: mainUrl, fileName: 'README.md', owner, repo };
-      return { raw: `https://raw.githubusercontent.com/${owner}/${repo}/master/README.md`, fileName: 'README.md', owner, repo };
+      const raw = (branch: string, path: string) =>
+        `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+
+      const skillPaths = [
+        'AGENTS.md', 'SOUL.md', 'agents.md', 'soul.md',
+        'skills/index.ts', 'skills/index.js', 'skill.ts', 'skill.js',
+        'src/skills/index.ts', 'src/skill.ts',
+        '.claude/skills/index.md', '.claude/AGENTS.md',
+        'README.md',
+      ];
+
+      // Probe main then master — fetch all skill files found, concat them
+      for (const branch of ['main', 'master']) {
+        const found: { path: string; url: string }[] = [];
+        await Promise.all(skillPaths.map(async (path) => {
+          const res = await fetch(raw(branch, path), { method: 'HEAD' });
+          if (res.ok) found.push({ path, url: raw(branch, path) });
+        }));
+
+        if (found.length > 0) {
+          // Prefer skill-specific files over README
+          const best = found.find(f => f.path !== 'README.md') || found[0];
+          return { raw: best.url, fileName: best.path.split('/').pop() || 'imported', owner, repo };
+        }
+      }
+
+      // Nothing found — fall back to README on main
+      return { raw: raw('main', 'README.md'), fileName: 'README.md', owner, repo };
     }
 
     throw new Error('Unrecognized URL. Expected: github.com/owner/repo, .../blob/branch/path, or .../tree/branch/path');
