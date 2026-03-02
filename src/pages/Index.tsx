@@ -123,13 +123,13 @@ function DemoContent() {
             </div>
 
             {/* Tabs */}
-            <Tabs defaultValue="simulate" className="space-y-4">
+            <Tabs defaultValue="sandbox" className="space-y-4">
               <TabsList className="grid grid-cols-2">
-                <TabsTrigger value="simulate" className="text-xs sm:text-sm">
-                  <ShieldAlert className="w-3.5 h-3.5 mr-1.5" /> Simulate Attacks
-                </TabsTrigger>
                 <TabsTrigger value="sandbox" className="text-xs sm:text-sm">
                   <Terminal className="w-3.5 h-3.5 mr-1.5" /> Sandbox
+                </TabsTrigger>
+                <TabsTrigger value="simulate" className="text-xs sm:text-sm">
+                  <ShieldAlert className="w-3.5 h-3.5 mr-1.5" /> Simulate Attacks
                 </TabsTrigger>
               </TabsList>
               <p className="text-[11px] text-muted-foreground/60 px-1">
