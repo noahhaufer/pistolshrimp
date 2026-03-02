@@ -1,4 +1,5 @@
 import { Github, Zap } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { FadeIn } from './FadeIn';
 
 export function CTASection() {
@@ -25,13 +26,13 @@ export function CTASection() {
                 <Github className="w-5 h-5" />
                 View on GitHub
               </a>
-              <a
-                href="#demo"
+              <Link
+                to="/demo"
                 className="flex items-center gap-2 px-6 py-3 bg-card border border-border text-white font-semibold rounded-lg hover:border-muted-foreground transition-colors"
               >
                 <Zap className="w-5 h-5" />
                 Try the Demo
-              </a>
+              </Link>
             </div>
 
             <div className="flex flex-wrap items-center justify-center gap-3">

@@ -25,7 +25,7 @@ export function Navigation() {
 
           <div className="hidden md:flex items-center gap-8">
             <a href="#architecture" className="text-sm text-muted-foreground hover:text-white transition-colors">Architecture</a>
-            <a href="#demo" className="text-sm text-muted-foreground hover:text-white transition-colors">Demo</a>
+            <a href="/demo" className="text-sm text-muted-foreground hover:text-white transition-colors">Demo</a>
             <a
               href="https://x.com/usepistolshrimp"
               target="_blank"

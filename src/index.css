@@ -4,72 +4,62 @@
 
 @layer base {
   :root {
-    /* Pistol Shrimp Security Theme - Dark with Cyan accents */
-    /* Background: #0a0b0f */
-    --background: 228 23% 5%;
-    --foreground: 240 5% 90%;
+    /* Pistol Shrimp — monochrome dark theme, red for danger */
+    --background: 220 16% 4%;       /* #090b10 */
+    --foreground: 220 10% 90%;      /* light gray */
 
-    /* Card: #12141a */
-    --card: 225 19% 9%;
-    --card-foreground: 240 5% 90%;
+    --card: 220 14% 8%;             /* #11141b */
+    --card-foreground: 220 10% 90%;
 
-    --popover: 225 19% 11%;
-    --popover-foreground: 240 5% 90%;
+    --popover: 220 14% 10%;
+    --popover-foreground: 220 10% 90%;
 
-    --primary: 187 85% 53%;
-    --primary-foreground: 228 23% 5%;
+    /* Primary = white. Clean, no color. */
+    --primary: 0 0% 100%;
+    --primary-foreground: 220 16% 4%;
 
-    --secondary: 225 19% 9%;
-    --secondary-foreground: 240 5% 85%;
+    --secondary: 220 14% 12%;
+    --secondary-foreground: 220 10% 70%;
 
-    /* Muted: #71717a */
-    --muted: 220 15% 15%;
-    --muted-foreground: 240 4% 46%;
+    --muted: 220 12% 16%;
+    --muted-foreground: 220 8% 50%;
 
-    --accent: 187 85% 53%;
-    --accent-foreground: 228 23% 5%;
+    /* Accent = soft blue-white for focus rings */
+    --accent: 220 14% 18%;
+    --accent-foreground: 220 10% 90%;
 
-    /* Destructive: #ff3b5c */
-    --destructive: 350 100% 62%;
+    /* Only semantic color: red for danger */
+    --destructive: 0 72% 51%;       /* #d32f2f */
     --destructive-foreground: 0 0% 100%;
 
-    /* Success: #00e59b */
-    --success: 161 100% 45%;
-    --success-foreground: 228 23% 5%;
+    /* Success = muted emerald for "passed" */
+    --success: 152 44% 40%;         /* #39996b — muted emerald */
+    --success-foreground: 152 44% 90%;
+    --success-lighter: 152 50% 60%; /* for text on dark bg */
+    --warning: 0 0% 56%;            /* medium gray — "flagged" */
+    --warning-foreground: 220 16% 4%;
+    --info: 220 8% 50%;
+    --info-foreground: 220 16% 4%;
 
-    /* Warning: #ffb020 */
-    --warning: 39 100% 56%;
-    --warning-foreground: 228 23% 5%;
+    --border: 220 10% 15%;
+    --input: 220 14% 8%;
+    --ring: 220 10% 40%;
 
-    /* Info: #3b82f6 */
-    --info: 217 91% 60%;
-    --info-foreground: 228 23% 5%;
+    --radius: 0.625rem;
 
-    /* Border: #27272a */
-    --border: 240 4% 16%;
-    --input: 225 19% 9%;
-    --ring: 187 85% 53%;
-
-    --radius: 0.75rem;
-
-    /* Security Gate Colors */
-    --gate-1: 280 65% 55%;
-    --gate-2: 220 85% 60%;
-    --gate-3: 142 71% 45%;
+    /* Gate colors — all neutral except blocked */
+    --gate-1: 220 8% 50%;
+    --gate-2: 220 8% 50%;
+    --gate-3: 220 8% 50%;
     --gate-blocked: 0 72% 51%;
 
-    /* Gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(187 85% 53%) 0%, hsl(187 75% 40%) 100%);
-    --gradient-dark: linear-gradient(180deg, hsl(220 20% 6%) 0%, hsl(220 20% 3%) 100%);
-    --gradient-glow: radial-gradient(ellipse at center, hsl(187 85% 53% / 0.15) 0%, transparent 70%);
-    --gradient-security: linear-gradient(135deg, hsl(280 65% 55% / 0.1) 0%, hsl(187 85% 53% / 0.1) 50%, hsl(142 71% 45% / 0.1) 100%);
-
     /* Shadows */
-    --shadow-glow: 0 0 30px hsl(187 85% 53% / 0.3);
-    --shadow-card: 0 4px 24px hsl(0 0% 0% / 0.4);
-    --shadow-danger: 0 0 20px hsl(0 72% 51% / 0.4);
+    --shadow-card: 0 2px 16px hsl(0 0% 0% / 0.5);
+    --shadow-glow: 0 0 20px hsl(0 0% 100% / 0.06);
+    --shadow-danger: 0 0 20px hsl(0 72% 51% / 0.3);
+    --shadow-success: 0 0 20px hsl(152 44% 40% / 0.3);
 
-    /* Animation timing */
+    /* Transitions */
     --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
     --transition-smooth: 300ms cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -90,45 +80,30 @@
 }
 
 @layer components {
-  /* Security Card Styles */
-  .security-card {
-    background: hsl(var(--card));
-    border: 1px solid hsl(var(--border));
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-card);
-  }
-
-  .security-card-glow {
-    background: hsl(var(--card));
-    border: 1px solid hsl(var(--primary) / 0.3);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-glow);
-  }
-
   /* Gate Status Indicators */
   .gate-indicator {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
-    animation: pulse 2s infinite;
   }
 
   .gate-pass {
     background: hsl(var(--success));
-    box-shadow: 0 0 10px hsl(var(--success) / 0.5);
+    box-shadow: 0 0 6px hsl(var(--success) / 0.4);
   }
 
   .gate-fail {
     background: hsl(var(--destructive));
-    box-shadow: 0 0 10px hsl(var(--destructive) / 0.5);
+    box-shadow: 0 0 6px hsl(var(--destructive) / 0.4);
   }
 
   .gate-pending {
-    background: hsl(var(--warning));
-    box-shadow: 0 0 10px hsl(var(--warning) / 0.5);
+    background: hsl(220 8% 35%);
+    box-shadow: 0 0 6px hsl(220 8% 35% / 0.3);
+    animation: pulse 2s infinite;
   }
 
-  /* Intent Queue Styles */
+  /* Intent Queue */
   .intent-item {
     background: hsl(var(--secondary));
     border: 1px solid hsl(var(--border));
@@ -137,31 +112,38 @@
   }
 
   .intent-item:hover {
-    border-color: hsl(var(--primary) / 0.5);
-    box-shadow: 0 0 15px hsl(var(--primary) / 0.1);
+    border-color: hsl(220 10% 30%);
   }
 
-  /* Button Variants */
+  /* Primary CTA button — white on dark */
   .btn-security {
-    background: var(--gradient-primary);
-    color: hsl(var(--primary-foreground));
+    background: hsl(0 0% 100%);
+    color: hsl(var(--background));
     font-weight: 600;
-    padding: 0.75rem 1.5rem;
+    padding: 0.625rem 1.25rem;
     border-radius: var(--radius);
     transition: var(--transition-smooth);
-    box-shadow: var(--shadow-glow);
   }
 
   .btn-security:hover {
+    background: hsl(0 0% 90%);
     transform: translateY(-1px);
-    box-shadow: 0 0 40px hsl(var(--primary) / 0.4);
+    box-shadow: 0 4px 20px hsl(0 0% 100% / 0.1);
   }
 
+  .btn-security:disabled {
+    background: hsl(220 10% 25%);
+    color: hsl(220 8% 50%);
+    transform: none;
+    box-shadow: none;
+  }
+
+  /* Danger button */
   .btn-danger {
     background: hsl(var(--destructive));
-    color: hsl(var(--destructive-foreground));
+    color: white;
     font-weight: 600;
-    padding: 0.75rem 1.5rem;
+    padding: 0.625rem 1.25rem;
     border-radius: var(--radius);
     transition: var(--transition-smooth);
   }
@@ -170,36 +152,32 @@
     box-shadow: var(--shadow-danger);
   }
 
-  /* Status Badge */
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
+  /* Status badges — monochrome except danger */
   .status-safe {
-    background: hsl(var(--success) / 0.15);
-    color: hsl(var(--success));
-    border: 1px solid hsl(var(--success) / 0.3);
+    background: hsl(0 0% 100% / 0.08);
+    color: hsl(0 0% 72%);
+    border: 1px solid hsl(0 0% 100% / 0.12);
   }
 
   .status-warning {
-    background: hsl(var(--warning) / 0.15);
-    color: hsl(var(--warning));
-    border: 1px solid hsl(var(--warning) / 0.3);
+    background: hsl(0 0% 100% / 0.06);
+    color: hsl(0 0% 56%);
+    border: 1px solid hsl(0 0% 100% / 0.10);
   }
 
   .status-danger {
-    background: hsl(var(--destructive) / 0.15);
-    color: hsl(var(--destructive));
-    border: 1px solid hsl(var(--destructive) / 0.3);
+    background: hsl(0 72% 51% / 0.12);
+    color: hsl(0 72% 63%);
+    border: 1px solid hsl(0 72% 51% / 0.25);
   }
 
-  /* Code/Hash Display */
+  .status-success {
+    background: hsl(var(--success) / 0.12);
+    color: hsl(var(--success-lighter));
+    border: 1px solid hsl(var(--success) / 0.25);
+  }
+
+  /* Code display */
   .code-display {
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     background: hsl(var(--background));
@@ -209,61 +187,80 @@
     color: hsl(var(--muted-foreground));
   }
 
-  /* Wallet Button Override */
-  .wallet-adapter-button {
-    background: var(--gradient-primary) !important;
-    color: hsl(var(--primary-foreground)) !important;
-    border-radius: var(--radius) !important;
-    font-weight: 600 !important;
-    transition: var(--transition-smooth) !important;
-    height: 44px !important;
-  }
+}
 
-  .wallet-adapter-button:hover {
-    box-shadow: var(--shadow-glow) !important;
-    transform: translateY(-1px) !important;
-  }
+/* Wallet adapter overrides — OUTSIDE @layer to beat the adapter's own CSS */
+.wallet-adapter-button {
+  background-color: white !important;
+  color: black !important;
+  border: none !important;
+  border-radius: var(--radius) !important;
+  font-weight: 500 !important;
+  transition: var(--transition-smooth) !important;
+  height: 40px !important;
+  font-size: 0.8125rem !important;
+}
 
-  .wallet-adapter-button-trigger {
-    background: hsl(var(--secondary)) !important;
-    border: 1px solid hsl(var(--border)) !important;
-  }
+.wallet-adapter-button:not([disabled]):hover {
+  background-color: #e5e5e5 !important;
+}
 
-  .wallet-adapter-dropdown-list {
-    background: hsl(var(--popover)) !important;
-    border: 1px solid hsl(var(--border)) !important;
-    border-radius: var(--radius) !important;
-  }
+.wallet-adapter-button-trigger {
+  background-color: white !important;
+  color: black !important;
+  border: none !important;
+}
 
-  .wallet-adapter-dropdown-list-item {
-    color: hsl(var(--foreground)) !important;
-  }
+.wallet-adapter-dropdown-list {
+  background: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+}
 
-  .wallet-adapter-dropdown-list-item:hover {
-    background: hsl(var(--secondary)) !important;
-  }
+.wallet-adapter-dropdown-list-item {
+  color: hsl(var(--foreground)) !important;
+}
 
-  .wallet-adapter-modal-wrapper {
-    background: hsl(var(--background) / 0.95) !important;
-  }
+.wallet-adapter-dropdown-list-item:hover {
+  background: hsl(var(--secondary)) !important;
+}
 
-  .wallet-adapter-modal-container {
-    background: hsl(var(--card)) !important;
-    border: 1px solid hsl(var(--border)) !important;
-    border-radius: var(--radius) !important;
-  }
+.wallet-adapter-modal-wrapper {
+  background: hsl(var(--background) / 0.95) !important;
+}
+
+.wallet-adapter-modal-container {
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+}
+
+.wallet-adapter-modal-button-close {
+  background: hsl(var(--secondary)) !important;
+}
+
+.wallet-adapter-modal-title {
+  color: hsl(var(--foreground)) !important;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button {
+  background-color: hsl(var(--secondary)) !important;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button:hover {
+  background-color: hsl(var(--muted)) !important;
 }
 
 @layer utilities {
   .text-gradient {
-    background: var(--gradient-primary);
+    background: linear-gradient(135deg, hsl(0 0% 100%), hsl(0 0% 70%));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
   .bg-gradient-security {
-    background: var(--gradient-security);
+    background: linear-gradient(135deg, hsl(0 0% 100% / 0.02) 0%, hsl(0 0% 100% / 0.04) 50%, hsl(0 0% 100% / 0.02) 100%);
   }
 
   .glow-primary {
@@ -276,31 +273,16 @@
 }
 
 @keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.6;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 @keyframes scan {
-  0% {
-    transform: translateY(-100%);
-  }
-  100% {
-    transform: translateY(100%);
-  }
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
 }
 
 @keyframes shield-pulse {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.05);
-    opacity: 0.8;
-  }
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.8; }
 }
-
