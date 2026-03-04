@@ -12,9 +12,9 @@ export interface TerminalLine {
   prefix?: string;
 }
 
-// Act 1: Legitimate 2 SOL Jupiter swap passes all 5 gates (frames 0-250)
-// Act 2: Malicious agent blocked (frames 270-510)
-// Closing: tagline (frames 520-580)
+// Act 1: Legitimate 2 SOL Jupiter swap — full 3-gate pipeline (frames 0-290)
+// Act 2: Malicious agent blocked (frames 310-530)
+// Closing: tagline (frames 540-580)
 
 export const SCRIPT: TerminalLine[] = [
   // Act 1 - header
@@ -30,54 +30,58 @@ export const SCRIPT: TerminalLine[] = [
   { text: 'Gate 1 │ Skill Scanner      PASS  risk: 0/100', color: 'success', startFrame: 115 },
 
   // Gate 2
-  { text: 'Gate 2 │ Prompt Firewall    scanning description...', color: 'muted', startFrame: 125, typeSpeed: 2 },
-  { text: 'Gate 2 │ Prompt Firewall    ✓ no injection patterns', color: 'success', startFrame: 145 },
-  { text: 'Gate 2 │ Prompt Firewall    ✓ behavioral baseline normal', color: 'success', startFrame: 155 },
-  { text: 'Gate 2 │ Prompt Firewall    PASS', color: 'success', startFrame: 165 },
+  { text: 'Gate 2 │ Prompt Firewall    scanning description + context...', color: 'muted', startFrame: 125, typeSpeed: 2 },
+  { text: 'Gate 2 │ Prompt Firewall    ✓ no injection patterns', color: 'success', startFrame: 148 },
+  { text: 'Gate 2 │ Prompt Firewall    ✓ description matches intent', color: 'success', startFrame: 158 },
+  { text: 'Gate 2 │ Prompt Firewall    PASS', color: 'success', startFrame: 168 },
 
   // Gate 3
-  { text: 'Gate 3 │ Policy Engine      decoding instruction via IDL...', color: 'muted', startFrame: 175, typeSpeed: 2 },
+  { text: 'Gate 3 │ Policy Engine      decoding transaction...', color: 'muted', startFrame: 178, typeSpeed: 2 },
   { text: 'Gate 3 │ Policy Engine      program: JUP6LkbZbjS1jKKw... (Jupiter v6)', color: 'info', startFrame: 195 },
   { text: 'Gate 3 │ Policy Engine      ✓ program on allowlist', color: 'success', startFrame: 205 },
   { text: 'Gate 3 │ Policy Engine      ✓ method: route_swap — matches description', color: 'success', startFrame: 215 },
-  { text: 'Gate 3 │ Policy Engine      ✓ amount: 2 SOL (under 5 SOL tx limit)', color: 'success', startFrame: 225 },
-  { text: 'Gate 3 │ Policy Engine      PASS', color: 'success', startFrame: 235 },
+  { text: 'Gate 3 │ Policy Engine      ✓ amount: 2 SOL (under 5 SOL limit)', color: 'success', startFrame: 225 },
+  { text: 'Gate 3 │ Policy Engine      ✓ slippage: 50 bps (under 300 bps max)', color: 'success', startFrame: 235 },
+  { text: 'Gate 3 │ Policy Engine      ✓ no drain pattern (single recipient)', color: 'success', startFrame: 245 },
+  { text: 'Gate 3 │ Policy Engine      PASS', color: 'success', startFrame: 255 },
 
-  // Gate 4 + 5
-  { text: 'Gate 4 │ Auto-sign          2 SOL < 5 SOL threshold — no human confirm needed', color: 'success', startFrame: 245 },
-  { text: 'Gate 5 │ Ephemeral Signer   signing... authority granted → tx signed → authority revoked', color: 'success', startFrame: 258, typeSpeed: 2 },
-  { text: '', color: 'muted', startFrame: 275 },
-  { text: '✓ Transaction confirmed: Fv9k...3xQp  (2 SOL → 312.48 USDC)', color: 'success', startFrame: 280, typeSpeed: 2 },
+  // Execution
+  { text: 'Execution │ TOCTOU           ✓ snapshot fresh (240ms)', color: 'success', startFrame: 265 },
+  { text: 'Execution │ Simulation       ✓ simulation passed — no CPI to untrusted programs', color: 'success', startFrame: 275, typeSpeed: 2 },
+  { text: 'Execution │ Sign             signed → tx sent → confirmed', color: 'success', startFrame: 288, typeSpeed: 2 },
+  { text: '', color: 'muted', startFrame: 300 },
+  { text: '✓ Transaction confirmed: Fv9k...3xQp  (2 SOL → 312.48 USDC)', color: 'success', startFrame: 305, typeSpeed: 2 },
 
   // Separator
-  { text: '', color: 'muted', startFrame: 295 },
-  { text: '────────────────────────────────────────────────────', color: 'muted', startFrame: 300 },
-  { text: '', color: 'muted', startFrame: 305 },
+  { text: '', color: 'muted', startFrame: 320 },
+  { text: '────────────────────────────────────────────────────', color: 'muted', startFrame: 325 },
+  { text: '', color: 'muted', startFrame: 330 },
 
   // Act 2 - Malicious
-  { text: '[intent received] agent-7f3a: "Swap 5 SOL for USDC"', color: 'white', startFrame: 315, typeSpeed: 3 },
-  { text: '', color: 'muted', startFrame: 340 },
+  { text: '[intent received] agent-7f3a: "Swap 5 SOL for USDC"', color: 'white', startFrame: 340, typeSpeed: 3 },
+  { text: '', color: 'muted', startFrame: 365 },
 
   // Gate 1 pass (skill already cached)
-  { text: 'Gate 1 │ Skill Scanner      ✓ cached — PASS', color: 'success', startFrame: 350 },
+  { text: 'Gate 1 │ Skill Scanner      ✓ cached — PASS', color: 'success', startFrame: 375 },
 
   // Gate 2 warns
-  { text: 'Gate 2 │ Prompt Firewall    scanning description...', color: 'muted', startFrame: 360, typeSpeed: 2 },
-  { text: 'Gate 2 │ Prompt Firewall    ⚠ behavioral drift: amount 2→5 SOL, 14/20 rate window', color: 'warning', startFrame: 380, typeSpeed: 2 },
-  { text: 'Gate 2 │ Prompt Firewall    WARN  continuing to Gate 3...', color: 'warning', startFrame: 400 },
+  { text: 'Gate 2 │ Prompt Firewall    scanning description...', color: 'muted', startFrame: 385, typeSpeed: 2 },
+  { text: 'Gate 2 │ Prompt Firewall    ⚠ behavioral drift: amount 2→5 SOL, 14/20 rate window', color: 'warning', startFrame: 405, typeSpeed: 2 },
+  { text: 'Gate 2 │ Prompt Firewall    WARN  continuing to Gate 3...', color: 'warning', startFrame: 425 },
 
   // Gate 3 FAILS
-  { text: 'Gate 3 │ Policy Engine      decoding instruction via IDL...', color: 'muted', startFrame: 415, typeSpeed: 2 },
-  { text: 'Gate 3 │ Policy Engine      program: 9xQe...unknown (NOT ON ALLOWLIST)', color: 'danger', startFrame: 435, typeSpeed: 2 },
-  { text: 'Gate 3 │ Policy Engine      ✗ decoded method: approve — NOT "swap"', color: 'danger', startFrame: 450, typeSpeed: 2 },
-  { text: 'Gate 3 │ Policy Engine      ✗ raw param: approve(u64::MAX) — UNLIMITED TOKEN APPROVAL', color: 'danger', startFrame: 465, typeSpeed: 2 },
-  { text: 'Gate 3 │ Policy Engine      ✗ description-instruction MISMATCH', color: 'danger', startFrame: 480, typeSpeed: 2 },
-  { text: 'Gate 3 │ Policy Engine      BLOCKED', color: 'danger', startFrame: 495 },
+  { text: 'Gate 3 │ Policy Engine      decoding transaction...', color: 'muted', startFrame: 438, typeSpeed: 2 },
+  { text: 'Gate 3 │ Policy Engine      program: 9xQe...unknown (NOT ON ALLOWLIST)', color: 'danger', startFrame: 455, typeSpeed: 2 },
+  { text: 'Gate 3 │ Policy Engine      ✗ decoded method: approve — NOT "swap"', color: 'danger', startFrame: 470, typeSpeed: 2 },
+  { text: 'Gate 3 │ Policy Engine      ✗ approve(u64::MAX) — UNLIMITED TOKEN APPROVAL', color: 'danger', startFrame: 485, typeSpeed: 2 },
+  { text: 'Gate 3 │ Policy Engine      ✗ description says "swap" but instruction is "approve"', color: 'danger', startFrame: 500, typeSpeed: 2 },
+  { text: 'Gate 3 │ Policy Engine      ✗ drain pattern: 4 distinct recipients detected', color: 'danger', startFrame: 515, typeSpeed: 2 },
+  { text: 'Gate 3 │ Policy Engine      BLOCKED  — 4 critical violations', color: 'danger', startFrame: 530 },
 
-  { text: '', color: 'muted', startFrame: 505 },
-  { text: '✗ BLOCKED — intent logged, owner alerted, agent-7f3a paused', color: 'danger', startFrame: 510, typeSpeed: 2 },
+  { text: '', color: 'muted', startFrame: 540 },
+  { text: '✗ BLOCKED — intent logged, owner alerted, agent-7f3a paused', color: 'danger', startFrame: 545, typeSpeed: 2 },
 
   // Closing
-  { text: '', color: 'muted', startFrame: 535 },
-  { text: 'Agents propose. They never sign.', color: 'cyan', startFrame: 545, typeSpeed: 1.5 },
+  { text: '', color: 'muted', startFrame: 565 },
+  { text: 'Agents propose. They never sign.', color: 'cyan', startFrame: 575, typeSpeed: 1.5 },
 ];
